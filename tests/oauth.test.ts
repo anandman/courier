@@ -8,11 +8,12 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 
 import { CourierClientStore } from '../src/auth/client-store.js';
+import { CODE_TTL_MS } from '../src/auth/oauth-provider.js';
 import { CourierOAuthProvider } from '../src/auth/oauth-provider.js';
 import { TokenService } from '../src/auth/tokens.js';
 
@@ -97,7 +98,7 @@ function seedCode(
         userId: entry.userId ?? 'user-1',
         email: 'user@example.com',
         scopes: entry.scopes ?? ['openid'],
-        expiresAt: entry.expiresAt ?? Date.now() + 60_000,
+        expiresAt: entry.expiresAt ?? Date.now() + CODE_TTL_MS,
     });
 }
 
@@ -125,6 +126,49 @@ describe('CourierClientStore', () => {
         await store.registerClient(client('c1') as never);
 
         expect(await store.getClient('c1')).toBeUndefined();
+    });
+
+    it('keeps an unauthorized registration long enough for a human to finish', async () => {
+        // Was 30 minutes, which silently orphaned anyone who started connecting
+        // and got distracted: the client caches its client_id, never re-registers
+        // per RFC 7591, and presents a dead id forever. `maxProvisional` is what
+        // bounds storage, not this.
+        const store = new CourierClientStore({ filePath: clientsFile });
+        await store.registerClient(client('c1') as never);
+
+        const data = JSON.parse(await readFile(clientsFile, 'utf8'));
+        const lifetime = data.clients.c1.expiresAt - Date.now();
+
+        expect(lifetime).toBeGreaterThan(60 * 60 * 1000);
+    });
+
+    it('says so when a registration expires', async () => {
+        // This used to vanish without a trace, which made an orphaned client
+        // indistinguishable from one that had never connected.
+        const warnings: string[] = [];
+        const warn = vi.spyOn(console, 'warn').mockImplementation((l) => {
+            warnings.push(String(l));
+        });
+        const store = new CourierClientStore({ filePath: clientsFile, provisionalTtlMs: -1 });
+        await store.registerClient(client('c1') as never);
+
+        await store.getClient('c1');
+        warn.mockRestore();
+
+        expect(warnings.some((w) => w.includes('c1') && w.includes('expired'))).toBe(true);
+    });
+
+    it('says so when a registration is evicted to make room', async () => {
+        const warnings: string[] = [];
+        const warn = vi.spyOn(console, 'warn').mockImplementation((l) => {
+            warnings.push(String(l));
+        });
+        const store = new CourierClientStore({ filePath: clientsFile, maxProvisional: 1 });
+        await store.registerClient(client('c1') as never);
+        await store.registerClient(client('c2') as never);
+        warn.mockRestore();
+
+        expect(warnings.some((w) => w.includes('c1') && w.includes('evicted'))).toBe(true);
     });
 
     it('never expires a promoted client', async () => {
@@ -209,6 +253,25 @@ describe('authorization code bindings', () => {
         await expect(
             provider.exchangeAuthorizationCode(client('client-a') as never, 'code-1')
         ).rejects.toThrow(/invalid or has expired/);
+    });
+
+    it('gives a code an RFC-compliant lifetime, long enough for a mobile handoff', () => {
+        // Was 60 seconds. ChatGPT's mobile app redeems via a custom URL scheme --
+        // browser, then app, then their backend, then us -- and an app switch
+        // alone can outlast a minute. RFC 6749 4.1.2 recommends a 10 minute
+        // maximum; shortness was never what made this safe.
+        expect(CODE_TTL_MS).toBeGreaterThanOrEqual(5 * 60 * 1000);
+        expect(CODE_TTL_MS).toBeLessThanOrEqual(10 * 60 * 1000);
+    });
+
+    it('still honours a code two minutes after issue', async () => {
+        // The regression this guards: under the old 60s window this threw.
+        const provider = makeProvider();
+        seedCode(provider, 'code-1', { expiresAt: Date.now() + CODE_TTL_MS - 2 * 60 * 1000 });
+
+        await expect(
+            provider.exchangeAuthorizationCode(client('client-a') as never, 'code-1')
+        ).resolves.toBeDefined();
     });
 
     it('rejects an expired code', async () => {

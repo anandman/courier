@@ -48,7 +48,22 @@ interface AuthorizationCode {
 }
 
 const PENDING_TTL_MS = 10 * 60 * 1000;
-const CODE_TTL_MS = 60 * 1000;
+/**
+ * How long an issued authorization code stays redeemable.
+ *
+ * This was 60 seconds, which is ten times tighter than the ten-minute maximum
+ * RFC 6749 section 4.1.2 recommends, and it assumed the redirect lands somewhere
+ * that redeems immediately. A mobile client does not: ChatGPT's app hands off
+ * through a custom URL scheme, so the browser has to reopen the app, which then
+ * calls its own backend, which finally calls us. An app switch, a locked screen
+ * or a moment's inattention blows past a minute easily.
+ *
+ * Five minutes is still well inside the recommendation, and shortness was never
+ * what made this safe: codes are single-use and consumed *before* validation so
+ * a failed attempt cannot be replayed, they are bound to both the client and the
+ * redirect_uri, and PKCE S256 is mandatory.
+ */
+export const CODE_TTL_MS = 5 * 60 * 1000;
 const MAX_PENDING = 500;
 const MAX_CODES = 500;
 

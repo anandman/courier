@@ -57,7 +57,21 @@ interface ClientFileData {
     clients: Record<string, StoredClient>;
 }
 
-const DEFAULT_PROVISIONAL_TTL_MS = 30 * 60 * 1000;
+/**
+ * How long a registration survives before anyone has authorized it.
+ *
+ * This was 30 minutes, which quietly orphans clients. A client registers, the
+ * user gets distracted, and half an hour later the registration is gone -- but
+ * the client cached its client_id and, per RFC 7591, has no reason to ever
+ * register again. It presents a dead id forever and the only cure is removing
+ * and re-adding the server by hand. Nothing in the log says why.
+ *
+ * The TTL was never what bounded disk use anyway: `maxProvisional` is, by
+ * evicting oldest-first when the cap is reached. A day gives a real person time
+ * to finish signing in, and a flood is still capped at 500 entries that promoted
+ * clients are never displaced by.
+ */
+const DEFAULT_PROVISIONAL_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_PROVISIONAL = 500;
 /** How stale a lastSeenAt stamp must be before a request rewrites the store. */
 const LAST_SEEN_RESOLUTION_MS = 5 * 60 * 1000;
@@ -83,6 +97,15 @@ export class CourierClientStore implements OAuthRegisteredClientsStore {
         if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
             clients.delete(clientId);
             await this.flush(clients);
+            // Say so. A client whose registration expired keeps presenting the
+            // same client_id and never re-registers, so this is the moment that
+            // explains every later failure -- and it used to leave no trace at
+            // all, which made an orphaned client indistinguishable from one that
+            // had never connected.
+            console.warn(
+                `[auth] registration expired for ${clientId}` +
+                    ` (never authorized; registered clients expire after ${Math.round(this.provisionalTtlMs / 3600000)}h)`
+            );
             return undefined;
         }
 
@@ -102,6 +125,13 @@ export class CourierClientStore implements OAuthRegisteredClientsStore {
                 .sort((a, b) => (a[1].expiresAt ?? 0) - (b[1].expiresAt ?? 0))[0];
             if (!oldest) break;
             clients.delete(oldest[0]);
+            // Eviction orphans that client permanently, same as expiry. It only
+            // happens under a flood, which is exactly when nobody is watching,
+            // so leave evidence.
+            console.warn(
+                `[auth] evicted registration ${oldest[0]} to make room` +
+                    ` (provisional cap ${this.maxProvisional} reached)`
+            );
         }
 
         const clientId = client.client_id || randomUUID();
