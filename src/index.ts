@@ -25,7 +25,7 @@ import { CourierOAuthProvider } from './auth/oauth-provider.js';
 import { TokenService } from './auth/tokens.js';
 import { loadOidcProviderConfig, loadOidcUiConfig, parseAllowedUsers, verifyIdToken } from './auth/oidc.js';
 import { createProxyAuthMiddleware } from './auth/proxy.js';
-import { signSession, verifySession } from './auth/session.js';
+import { assertUsableSessionSecret, signSession, verifySession } from './auth/session.js';
 import { AccountManager } from './account-manager.js';
 import { TOOL_GROUP_IDS } from './tools/groups.js';
 import { handleStatelessMcpRequest } from './http-transport.js';
@@ -123,6 +123,15 @@ function parseAuthMode(): 'oidc' | 'proxy' | 'none' {
         return 'oidc';
     }
     return 'none';
+}
+
+/**
+ * The browser-session signing secret. Falls back to COURIER_VAULT_KEY for
+ * deployments predating MCP_UI_SESSION_SECRET; setting the dedicated variable
+ * keeps the signing key separate from the vault's encryption key.
+ */
+function resolveSessionSecret(): string {
+    return process.env.MCP_UI_SESSION_SECRET ?? process.env.COURIER_VAULT_KEY ?? '';
 }
 
 function parseCookies(headerValue: string | undefined): Record<string, string> {
@@ -240,6 +249,10 @@ async function startHttpServer() {
         oidcProviderConfig = await loadOidcProviderConfig();
         oidcUiConfig = loadOidcUiConfig();
         assertAccessIsRestricted('oidc', oidcProviderConfig.allowedUsers);
+        // Check the browser-session secret here, not at first login. Signing
+        // throws on a weak secret, and without this the failure would surface
+        // as a 500 from /auth/callback long after startup looked healthy.
+        assertUsableSessionSecret(resolveSessionSecret());
 
         // Advertised in protected resource metadata as `resource_documentation`.
         // It previously defaulted to a path on this server that nothing serves,
@@ -455,7 +468,7 @@ async function startHttpServer() {
         }
 
         const ttlSeconds = Number.parseInt(process.env.MCP_UI_SESSION_TTL ?? '604800', 10);
-        const sessionSecret = process.env.MCP_UI_SESSION_SECRET ?? process.env.COURIER_VAULT_KEY ?? '';
+        const sessionSecret = resolveSessionSecret();
         if (!sessionSecret) {
             res.status(500).send('MCP_UI_SESSION_SECRET is required');
             return;
@@ -489,7 +502,7 @@ async function startHttpServer() {
     });
 
     app.get('/ui', async (req, res) => {
-        const uiUser = resolveUiUser(req, authMode);
+        const uiUser = resolveUiUser(req, authMode, oidcProviderConfig?.allowedUsers);
         if (!uiUser) {
             res.status(200).send(renderLoginPage(authMode));
             return;
@@ -529,7 +542,7 @@ async function startHttpServer() {
     });
 
     app.post('/ui/clients/revoke', async (req, res) => {
-        const uiUser = resolveUiUser(req, authMode);
+        const uiUser = resolveUiUser(req, authMode, oidcProviderConfig?.allowedUsers);
         if (!uiUser) {
             res.status(401).send('Unauthorized');
             return;
@@ -558,7 +571,7 @@ async function startHttpServer() {
     });
 
     app.post('/ui/tools', async (req, res) => {
-        const uiUser = resolveUiUser(req, authMode);
+        const uiUser = resolveUiUser(req, authMode, oidcProviderConfig?.allowedUsers);
         if (!uiUser) {
             res.status(401).send('Unauthorized');
             return;
@@ -592,7 +605,7 @@ async function startHttpServer() {
     });
 
     app.post('/ui/account', async (req, res) => {
-        const uiUser = resolveUiUser(req, authMode);
+        const uiUser = resolveUiUser(req, authMode, oidcProviderConfig?.allowedUsers);
         if (!uiUser) {
             res.status(401).send('Unauthorized');
             return;
@@ -740,7 +753,23 @@ function resolveUserIdFromAuth(authInfo: { extra?: Record<string, unknown> }, cl
     return null;
 }
 
-function resolveUiUser(req: express.Request, authMode: 'oidc' | 'proxy' | 'none') {
+/**
+ * Resolves the signed-in user for a UI request.
+ *
+ * `allowedUsers` is re-checked here on every request rather than trusted from
+ * the cookie. The session is a self-contained signature with a seven-day
+ * lifetime and no server-side record, so removing someone from
+ * MCP_ALLOWED_USERS used to do nothing at all until their cookie expired: the
+ * allowlist was consulted once, at login, and never again. Revocation has to
+ * happen on the read path or it does not happen.
+ */
+export function resolveUiUser(
+    req: express.Request,
+    authMode: 'oidc' | 'proxy' | 'none',
+    allowedUsers?: Set<string>
+) {
+    // proxy mode needs no check here: createProxyAuthMiddleware enforces the
+    // allowlist per request already, since it re-reads the headers every time.
     if (authMode === 'proxy') {
         const authInfo = req.auth;
         const userIdClaim = process.env.MCP_USER_ID_CLAIM ?? 'email';
@@ -749,7 +778,7 @@ function resolveUiUser(req: express.Request, authMode: 'oidc' | 'proxy' | 'none'
     }
 
     if (authMode === 'oidc') {
-        const sessionSecret = process.env.MCP_UI_SESSION_SECRET ?? process.env.COURIER_VAULT_KEY ?? '';
+        const sessionSecret = resolveSessionSecret();
         if (!sessionSecret) {
             return null;
         }
@@ -758,6 +787,12 @@ function resolveUiUser(req: express.Request, authMode: 'oidc' | 'proxy' | 'none'
         if (!sessionToken) return null;
         const session = verifySession(sessionToken, sessionSecret);
         if (!session) return null;
+        if (allowedUsers && !allowedUsers.has(session.sub.toLowerCase())) {
+            console.warn(
+                `[auth] rejecting session for ${session.sub}: no longer in the allowlist`
+            );
+            return null;
+        }
         return { userId: session.sub, email: session.email };
     }
 
