@@ -107,6 +107,9 @@ export async function searchEmails(
     const summaries: EmailSummary[] = emails.map(email => ({
         id: email.id,
         threadId: email.threadId,
+        messageId: email.messageId,
+        inReplyTo: email.inReplyTo,
+        references: email.references,
         subject: email.subject,
         from: email.from,
         to: email.to,

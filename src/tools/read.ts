@@ -25,6 +25,9 @@ export async function getEmail(
 ): Promise<{
     id: string;
     threadId: string;
+    messageId: string[] | null;
+    inReplyTo: string[] | null;
+    references: string[] | null;
     subject: string | null;
     from: string;
     to: string;
@@ -89,6 +92,11 @@ export async function getEmail(
     return {
         id: email.id,
         threadId: email.threadId,
+        // Raw JMAP shape on purpose: a pre-built message:// URL would hide the
+        // null case, and a caller that cannot see the absence cannot fall back.
+        messageId: email.messageId,
+        inReplyTo: email.inReplyTo,
+        references: email.references,
         subject: email.subject,
         from: formatAddresses(email.from),
         to: formatAddresses(email.to),

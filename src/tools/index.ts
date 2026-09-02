@@ -236,13 +236,13 @@ const baseTools: ToolDefinition[] = [
     // Search & Read
     {
         name: 'search_emails',
-        description: 'Search emails with filters and return lightweight results (headers + snippet). Use this to narrow scope before calling get_email.',
+        description: 'Search emails with filters and return lightweight results (headers + snippet). Includes the RFC 5322 messageId, inReplyTo and references headers, so deep links and thread grouping need no follow-up fetch. Use this to narrow scope before calling get_email.',
         inputSchema: searchEmailsSchema,
         handler: (params) => searchEmails(searchEmailsSchema.parse(params)),
     },
     {
         name: 'get_email',
-        description: 'Get the full content of an email by ID (body + attachments). Token-expensive; only call for messages you really need.',
+        description: 'Get the full content of an email by ID (body + attachments), including the RFC 5322 messageId, inReplyTo and references headers. Token-expensive; only call for messages you really need -- search_emails already returns those headers.',
         inputSchema: getEmailSchema,
         handler: (params) => getEmail(getEmailSchema.parse(params)),
     },
