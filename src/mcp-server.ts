@@ -7,8 +7,32 @@ import { getRequestContext } from './request-context.js';
 import { recordToolListServed, shouldNotifyToolListChanged } from './tool-list-watch.js';
 import { tools } from './tools/index.js';
 import { isToolVisible } from './tools/groups.js';
+import { isToolSupported, unsupportedToolMessage } from './tools/scopes.js';
+import { getClient } from 'jmap-courier';
 
 const isEnabled = (value: string | undefined) => value === '1' || value === 'true';
+
+/**
+ * What the current account's token is permitted to do, or null when that cannot
+ * be determined.
+ *
+ * The session is fetched once per account and cached on the client, which is
+ * itself cached, so this is a network call the first time and a map lookup
+ * afterwards -- cheap enough to consult on every tools/list.
+ *
+ * Every failure yields null, which permits everything. A server that hid all of
+ * its tools because a session fetch timed out would look broken rather than
+ * restricted, and the tool call itself still fails safely with a clear message.
+ */
+async function currentCapabilities(): Promise<ReadonlySet<string> | null> {
+    try {
+        const account = getAccountManager().getCurrentAccount();
+        if (!account) return null;
+        return await getClient(account).getCapabilities();
+    } catch {
+        return null;
+    }
+}
 
 /** Opt-in, matching MCP_ACCESS_LOG: one line per tool call. */
 const TOOL_LOG_ENABLED = isEnabled(process.env.MCP_TOOL_LOG);
@@ -51,10 +75,15 @@ export function createMcpServer(): Server {
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
         const disabled = getAccountManager().getDisabledToolGroups();
+        // Two independent filters. Tool groups are what the user chose to see;
+        // capabilities are what the credential can actually do. Offering a tool
+        // that can only ever 403 wastes a call and teaches the model nothing.
+        const available = await currentCapabilities();
         recordToolListServed(getRequestContext()?.authInfo?.clientId);
         return {
             tools: tools
                 .filter((tool) => isToolVisible(tool.name, disabled))
+                .filter((tool) => isToolSupported(tool.name, available))
                 .map((tool) => ({
                     name: tool.name,
                     description: tool.description,
@@ -83,6 +112,15 @@ export function createMcpServer(): Server {
             const message = `Tool "${name}" is turned off for this account. Enable it in Courier's settings to use it.`;
             logToolCall(name, args, startedAt, message);
             await notifyToolListChanged(extra, clientId, manager.getToolSettingsUpdatedAt());
+            throw new Error(message);
+        }
+
+        // Same reasoning as the visibility check above: a cached tool list can
+        // name a tool this token cannot use. Fail here with an explanation
+        // instead of spending a round trip to be told "Disallowed capabilities".
+        if (!isToolSupported(name, await currentCapabilities())) {
+            const message = unsupportedToolMessage(name);
+            logToolCall(name, args, startedAt, message);
             throw new Error(message);
         }
 
