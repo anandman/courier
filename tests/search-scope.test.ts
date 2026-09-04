@@ -28,9 +28,9 @@ let capturedFilter: Record<string, unknown> | undefined;
 const client = {
     getMailboxByRole: vi.fn(async (role: string) => MAILBOXES[role] ?? null),
     resolveMailbox: vi.fn(async (idOrName: string) => MAILBOXES[idOrName.toLowerCase()] ?? null),
-    queryEmails: vi.fn(async (filter: Record<string, unknown> | undefined) => {
+    queryEmailsPage: vi.fn(async (filter: Record<string, unknown> | undefined) => {
         capturedFilter = filter;
-        return [];
+        return { ids: [], total: 0, position: 0 };
     }),
     getEmails: vi.fn(async () => []),
 };

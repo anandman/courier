@@ -63,7 +63,11 @@ const WITHOUT_HEADERS = {
 const client = {
     getMailboxByRole: vi.fn(async () => ({ id: 'mbx-inbox', role: 'inbox' })),
     resolveMailbox: vi.fn(async () => ({ id: 'mbx-inbox', role: 'inbox' })),
-    queryEmails: vi.fn(async () => ['Stmtge4GjBeV', 'Draft001']),
+    queryEmailsPage: vi.fn(async () => ({
+        ids: ['Stmtge4GjBeV', 'Draft001'],
+        total: 2,
+        position: 0,
+    })),
     getEmails: vi.fn(async () => [WITH_HEADERS, WITHOUT_HEADERS]),
     getEmailWithBody: vi.fn(async (id: string) =>
         id === 'Draft001' ? WITHOUT_HEADERS : WITH_HEADERS

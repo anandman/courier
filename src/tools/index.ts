@@ -236,7 +236,7 @@ const baseTools: ToolDefinition[] = [
     // Search & Read
     {
         name: 'search_emails',
-        description: 'Search emails with filters and return lightweight results (headers + snippet). Includes the RFC 5322 messageId, inReplyTo and references headers, so deep links and thread grouping need no follow-up fetch. Use this to narrow scope before calling get_email.',
+        description: 'Search emails with filters and return lightweight results (headers + snippet). Includes the RFC 5322 messageId, inReplyTo and references headers, so deep links and thread grouping need no follow-up fetch. Returns at most 100 per call: check `total` (all matches) against `returned` and `hasMore`, and page with `position` when the set is larger. Use this to narrow scope before calling get_email.',
         inputSchema: searchEmailsSchema,
         handler: (params) => searchEmails(searchEmailsSchema.parse(params)),
     },

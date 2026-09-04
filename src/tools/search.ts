@@ -18,7 +18,8 @@ export const searchEmailsSchema = z.object({
     before: z.string().optional().describe('Only emails before this date (ISO 8601 format)'),
     hasAttachment: z.boolean().optional().describe('Filter by attachment presence'),
     isUnread: z.boolean().optional().describe('Filter by unread status'),
-    limit: z.number().optional().default(20).describe('Maximum number of results (default 20, max 100). Lower = fewer tokens.'),
+    limit: z.number().optional().default(20).describe('Results per page (default 20, max 100 -- a larger value is capped, not honoured). Lower = fewer tokens.'),
+    position: z.number().optional().default(0).describe('Zero-based offset into the matching set, for paging. Combine with the returned total/hasMore to walk a result set larger than one page; keep the other filters identical between calls.'),
 });
 
 // Tool handlers
@@ -26,7 +27,14 @@ export async function searchEmails(
     params: z.infer<typeof searchEmailsSchema>
 ): Promise<{
     emails: EmailSummary[];
+    /** How many messages match the filter, not how many are in this page. */
     total: number;
+    /** Offset of this page into that set. */
+    position: number;
+    /** Size of this page. Differs from `total` whenever the set was truncated. */
+    returned: number;
+    /** True when messages match beyond this page. */
+    hasMore: boolean;
     account: string | null;
 }> {
     const manager = getAccountManager();
@@ -91,17 +99,21 @@ export async function searchEmails(
         filter.hasKeyword = '$seen';
     }
 
+    // The cap stays: these results go into a model's context window, so an
+    // unbounded page is the harm it exists to prevent. What changes is that a
+    // truncated set now says so, via total/hasMore, instead of looking complete.
     const limit = Math.min(params.limit || 20, 100);
+    const position = Math.max(0, Math.trunc(params.position || 0));
 
     // Query for email IDs
-    const emailIds = await client.queryEmails(
+    const page = await client.queryEmailsPage(
         Object.keys(filter).length > 0 ? filter : undefined,
         [{ property: 'receivedAt', isAscending: false }],
-        limit
+        { limit, position }
     );
 
     // Fetch email details
-    const emails = await client.getEmails(emailIds);
+    const emails = await client.getEmails(page.ids);
 
     // Convert to summary format
     const summaries: EmailSummary[] = emails.map(email => ({
@@ -122,7 +134,13 @@ export async function searchEmails(
 
     return {
         emails: summaries,
-        total: summaries.length,
+        // Previously this reported summaries.length -- the page size wearing the
+        // name of the match count. A caller with 49 matches saw "total: 20" and
+        // had nothing to tell it the other 29 existed.
+        total: page.total,
+        position: page.position,
+        returned: summaries.length,
+        hasMore: page.position + summaries.length < page.total,
         account: manager.getCurrentAccountName(),
     };
 }
