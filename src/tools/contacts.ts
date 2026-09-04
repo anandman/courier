@@ -15,7 +15,7 @@ export const listAddressBooksSchema = z.object({});
 
 export const searchContactsSchema = z.object({
     text: z.string().describe('Search term (matches name, email, phone number, etc.)'),
-    limit: z.number().optional().default(50).describe('Max results to return (default 50)'),
+    limit: z.coerce.number().finite().optional().default(50).describe('Max results to return (default 50)'),
 });
 
 export const getContactSchema = z.object({

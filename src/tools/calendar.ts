@@ -267,7 +267,7 @@ export const listEventsSchema = z.object({
     calendarUrl: z.string().optional().describe('Filter to a specific calendar URL to reduce results'),
     startAfter: z.string().optional().describe('Only events starting on or after this date (ISO 8601)'),
     startBefore: z.string().optional().describe('Only events starting before this date (ISO 8601)'),
-    limit: z.number().optional().describe('Maximum number of events to return (lower is cheaper)'),
+    limit: z.coerce.number().finite().optional().describe('Maximum number of events to return (lower is cheaper)'),
 });
 
 export async function listEvents(params: z.infer<typeof listEventsSchema>): Promise<{

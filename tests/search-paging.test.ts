@@ -15,7 +15,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { AccountManager, type ExtendedMultiAccountConfig } from '../src/account-manager.js';
 import { runWithRequestContext } from '../src/request-context.js';
-import { searchEmails } from '../src/tools/search.js';
+import { searchEmails, searchEmailsSchema } from '../src/tools/search.js';
 
 const config: ExtendedMultiAccountConfig = {
     accounts: [
@@ -78,14 +78,20 @@ vi.mock('jmap-courier', async (importOriginal) => {
     return { ...actual, getClient: () => client };
 });
 
-function search(params: Partial<Parameters<typeof searchEmails>[0]> = {}) {
+/**
+ * Parses through the schema before calling the handler, exactly as the tool
+ * dispatcher does. Calling the handler directly would skip validation and
+ * coercion entirely -- which it did in an earlier draft of these tests, making
+ * them pass for reasons that had nothing to do with the code under test.
+ */
+function search(params: Record<string, unknown> = {}) {
     const accountManager = new AccountManager({
         initialConfig: config,
         allowEnv: false,
         allowConfigFile: false,
     });
     return runWithRequestContext({ accountManager }, () =>
-        searchEmails({ limit: 20, position: 0, ...params } as never)
+        searchEmails(searchEmailsSchema.parse(params))
     );
 }
 
@@ -203,5 +209,36 @@ describe('limit and position are sanitised', () => {
         await search({});
 
         expect(requested?.position).toBe(0);
+    });
+});
+
+describe('numeric inputs survive a client that sends strings', () => {
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('accepts a string offset, as clients actually send', async () => {
+        // Observed live: a client sent position as "0" and the call failed
+        // validation, which the user could do nothing about.
+        const result = await search({ position: '40' });
+
+        expect(requested?.position).toBe(40);
+        expect(result.position).toBe(40);
+    });
+
+    it('accepts a string limit', async () => {
+        await search({ limit: '30' });
+
+        expect(requested?.limit).toBe(30);
+    });
+
+    it('still rejects a value that is not a number at all', () => {
+        expect(() => searchEmailsSchema.parse({ limit: 'twenty' })).toThrow();
+    });
+
+    it('rejects Infinity, which coercion alone would let through', () => {
+        // Number("Infinity") is a valid number, so only .finite() stops it
+        // reaching the query as a position.
+        expect(() => searchEmailsSchema.parse({ position: 'Infinity' })).toThrow();
     });
 });

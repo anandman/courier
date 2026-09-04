@@ -8,6 +8,18 @@ import { getClient } from 'jmap-courier';
 import type { EmailFilter, EmailSummary } from 'jmap-courier';
 
 // Tool schemas
+/**
+ * Numeric tool inputs are coerced rather than strictly typed.
+ *
+ * MCP clients routinely send a JSON string where the schema says number --
+ * observed live, a client sent position as "0" and the call was rejected with a
+ * validation error the user could do nothing about. The tool contract is what
+ * the client can express, not what we would prefer, so accept both.
+ *
+ * `.finite()` covers what coercion lets through: Number("Infinity") is a valid
+ * number and would reach the JMAP query as a position. A non-numeric string is
+ * already rejected by coercion itself, so that case needs nothing extra.
+ */
 export const searchEmailsSchema = z.object({
     mailbox: z.string().optional().describe('Mailbox to search in. Omit to search all mail EXCEPT Junk and Trash, which is usually what you want. Pass "Inbox" when the question is specifically about the inbox ("do I have new mail?", "what is my latest unread message?"), since mail filed into other folders would otherwise be included. Pass "Junk" or "Trash" explicitly to search those — they are never searched by default. The standard names ("Inbox", "Sent", "Drafts", "Archive", "Junk", "Trash") always find the right folder whatever the provider calls it — "Junk" finds a folder named "Spam". Any other folder is matched by name, or by full path ("migrated/Junk") when the name is ambiguous.'),
     query: z.string().optional().describe('Full-text search query (use sparingly; can expand results).'),
@@ -18,8 +30,8 @@ export const searchEmailsSchema = z.object({
     before: z.string().optional().describe('Only emails before this date (ISO 8601 format)'),
     hasAttachment: z.boolean().optional().describe('Filter by attachment presence'),
     isUnread: z.boolean().optional().describe('Filter by unread status'),
-    limit: z.number().optional().default(20).describe('Results per page (default 20, max 100 -- a larger value is capped, not honoured). Lower = fewer tokens.'),
-    position: z.number().optional().default(0).describe('Zero-based offset into the matching set, for paging. Combine with the returned total/hasMore to walk a result set larger than one page; keep the other filters identical between calls.'),
+    limit: z.coerce.number().finite().optional().default(20).describe('Results per page (default 20, max 100 -- a larger value is capped, not honoured). Lower = fewer tokens.'),
+    position: z.coerce.number().finite().optional().default(0).describe('Zero-based offset into the matching set, for paging. Combine with the returned total/hasMore to walk a result set larger than one page; keep the other filters identical between calls.'),
 });
 
 // Tool handlers
