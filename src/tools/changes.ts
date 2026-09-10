@@ -23,7 +23,7 @@ export const changesSinceSchema = z.object({
         .string()
         .optional()
         .describe(
-            'The state string from a previous call. Omit on first use to receive the current state and no changes -- bootstrapping history is search_emails\' job, not this tool\'s. Store the returned state only after a successful call.'
+            'The state string from a previous call. Omit on first use to receive the current state and no changes, flagged bootstrapped: true -- which means NO HISTORY EXISTS before that point, not that nothing has changed. Cover the preceding window with search_emails before relying on this feed. Store the returned state only after a successful call.'
         ),
     mailboxes: z
         .array(z.string())
@@ -44,8 +44,22 @@ export interface ChangesSinceResult {
     newState: string;
     /** True when changes remain beyond maxChanges; call again with newState. */
     hasMoreChanges: boolean;
-    /** True when no state was supplied: a starting point, not a result set. */
+    /**
+     * True when no state was supplied.
+     *
+     * **This is not success-with-nothing-new.** It means the feed has no
+     * history before `newState`: everything up to that moment is unaccounted
+     * for, and only a full sync can cover it. A caller treating this like an
+     * ordinary empty delta silently loses the entire preceding window -- which
+     * cost one consumer 26 hours of mail, 14 messages, on its first real run.
+     */
     bootstrapped: boolean;
+    /**
+     * Present only on bootstrap. Prose, because the primary caller is a model
+     * reading the payload, and a bare boolean is too easy to read as
+     * reassurance.
+     */
+    note?: string;
     created: EmailSummary[];
     updated: EmailSummary[];
     /** Genuinely expunged from the account. */
@@ -92,6 +106,10 @@ export async function changesSince(
             newState: await client.getEmailState(),
             hasMoreChanges: false,
             bootstrapped: true,
+            note:
+                'No history exists before this state. This is a starting point, NOT a report that nothing changed. ' +
+                'Anything that arrived before now is not in this response and never will be -- cover that window with ' +
+                'search_emails, then poll with the returned state.',
             created: [],
             updated: [],
             destroyedIds: [],

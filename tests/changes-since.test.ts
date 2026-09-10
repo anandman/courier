@@ -120,6 +120,24 @@ describe('bootstrapping is explicit', () => {
         expect(client.getEmailState).not.toHaveBeenCalled();
     });
 
+    it('says in prose that bootstrap means no history, not "nothing changed"', async () => {
+        // A consumer read bootstrapped:true as success-with-nothing-new and
+        // silently dropped 26 hours of mail -- 14 messages -- on its first real
+        // run. The boolean was honest; it was just easy to read as reassurance.
+        const result = await run({});
+
+        expect(result.note).toMatch(/no history/i);
+        expect(result.note).toMatch(/NOT a report that nothing changed/i);
+        expect(result.note).toMatch(/search_emails/);
+    });
+
+    it('omits the note once there is real history to report', async () => {
+        const result = await run({ state: 'state-1' });
+
+        expect(result.note).toBeUndefined();
+        expect(result.bootstrapped).toBe(false);
+    });
+
     it('still bootstraps normally with a valid scope', async () => {
         const result = await run({ mailboxes: ['Inbox', 'Sent'] });
 
