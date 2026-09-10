@@ -75,6 +75,16 @@ export async function changesSince(
     const client = getClient(account);
     const accountName = manager.getCurrentAccountName();
 
+    // Validate the scope before anything else, including the bootstrap return.
+    //
+    // Bootstrap is the ONE call where a caller writes the mailbox names for the
+    // first time, so it is exactly where a typo happens -- and it used to be
+    // the one path that skipped this check. The caller stored the state, every
+    // later poll passed it and errored correctly, but by then nobody was
+    // looking, because the first call had "worked". Resolving by role first
+    // also means "Junk" finds a folder named "Spam".
+    const scope = await resolveScope(client, params.mailboxes);
+
     // No state means "where do I start?", never "give me everything". A delta
     // tool that quietly returned a whole mailbox would look like it worked.
     if (!params.state) {
@@ -91,10 +101,6 @@ export async function changesSince(
     }
 
     const changes = await client.getEmailChanges(params.state, { maxChanges: params.maxChanges });
-
-    // Resolve the scope by role first, so "Junk" finds a folder named "Spam"
-    // and "Inbox" is the real one rather than an import artefact.
-    const scope = await resolveScope(client, params.mailboxes);
 
     const inScope = (email: Email): boolean =>
         scope === null || Object.keys(email.mailboxIds ?? {}).some((id) => scope.has(id));

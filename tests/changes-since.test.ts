@@ -106,6 +106,27 @@ describe('bootstrapping is explicit', () => {
         expect(client.getEmailChanges).not.toHaveBeenCalled();
     });
 
+    it('validates the mailbox scope on the bootstrap path too', async () => {
+        // The regression this pins. Bootstrap is the ONE call where the scope is
+        // written for the first time, so it is exactly where a typo happens --
+        // and it was the one path that skipped validation. The caller stored the
+        // state, every later poll errored correctly, but nobody was looking by
+        // then because the first call had "worked".
+        await expect(run({ mailboxes: ['ZZZ-not-a-folder'] })).rejects.toThrow(/not found/);
+    });
+
+    it('does not hand back a state when the scope was never valid', async () => {
+        await expect(run({ mailboxes: ['Inbox', 'Inobx'] })).rejects.toThrow(/Inobx/);
+        expect(client.getEmailState).not.toHaveBeenCalled();
+    });
+
+    it('still bootstraps normally with a valid scope', async () => {
+        const result = await run({ mailboxes: ['Inbox', 'Sent'] });
+
+        expect(result.bootstrapped).toBe(true);
+        expect(result.newState).toBe('state-now');
+    });
+
     it('does not bootstrap once a state is supplied', async () => {
         const result = await run({ state: 'state-1' });
 

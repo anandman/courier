@@ -244,7 +244,7 @@ const baseTools: ToolDefinition[] = [
     {
         name: 'changes_since',
         description:
-            'Incremental mail changes since a previous state, in ONE request -- use this to poll instead of repeating searches. Omit state to get a starting point and no changes. Returns created/updated messages, destroyedIds, and departedIds (changed but now outside the requested mailboxes). If hasMoreChanges is true, call again with the returned state. Throws rather than returning empty when the state is too old to compute changes from; treat that as "resync", never as "nothing changed".',
+            'Incremental mail changes since a previous state, in ONE request -- use this to poll instead of repeating searches. Omit state to get a starting point and no changes. Returns created/updated messages, destroyedIds, and departedIds (changed but now outside the requested mailboxes). If hasMoreChanges is true, call again with the returned state. Throws rather than returning empty when the state is too old to compute changes from; treat that as "resync", never as "nothing changed". Note that failure arrives as an MCP tool error (isError on the envelope, message in the body), NOT as a JSON-RPC error -- a client that only unwraps content[].text will read it as a result with no created/updated keys, i.e. an empty delta, which is the one reading that corrupts a cache.',
         inputSchema: changesSinceSchema,
         handler: (params) => changesSince(changesSinceSchema.parse(params)),
     },
