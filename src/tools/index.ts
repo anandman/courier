@@ -109,6 +109,7 @@ import {
     updateEvent,
     deleteEvent,
 } from './calendar.js';
+import { changesSince, changesSinceSchema } from './changes.js';
 
 // Tool definition type
 export interface ToolDefinition {
@@ -239,6 +240,13 @@ const baseTools: ToolDefinition[] = [
         description: 'Search emails with filters and return lightweight results (headers + snippet). Includes the RFC 5322 messageId, inReplyTo and references headers, so deep links and thread grouping need no follow-up fetch. Returns at most 100 per call: check `total` (all matches) against `returned` and `hasMore`, and page with `position` when the set is larger. Use this to narrow scope before calling get_email.',
         inputSchema: searchEmailsSchema,
         handler: (params) => searchEmails(searchEmailsSchema.parse(params)),
+    },
+    {
+        name: 'changes_since',
+        description:
+            'Incremental mail changes since a previous state, in ONE request -- use this to poll instead of repeating searches. Omit state to get a starting point and no changes. Returns created/updated messages, destroyedIds, and departedIds (changed but now outside the requested mailboxes). If hasMoreChanges is true, call again with the returned state. Throws rather than returning empty when the state is too old to compute changes from; treat that as "resync", never as "nothing changed".',
+        inputSchema: changesSinceSchema,
+        handler: (params) => changesSince(changesSinceSchema.parse(params)),
     },
     {
         name: 'get_email',
@@ -418,6 +426,7 @@ export {
     switchAccount,
     getCurrentAccount,
     listMailboxes,
+    changesSince,
     createMailbox,
     renameMailbox,
     deleteMailbox,

@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { getAccountManager } from '../account-manager.js';
 import { getClient } from 'jmap-courier';
-import type { EmailFilter, EmailSummary } from 'jmap-courier';
+import type { Email, EmailFilter, EmailSummary } from 'jmap-courier';
 
 // Tool schemas
 /**
@@ -33,6 +33,31 @@ export const searchEmailsSchema = z.object({
     limit: z.coerce.number().finite().optional().default(20).describe('Results per page (default 20, max 100 -- a larger value is capped, not honoured). Lower = fewer tokens.'),
     position: z.coerce.number().finite().optional().default(0).describe('Zero-based offset into the matching set, for paging. Combine with the returned total/hasMore to walk a result set larger than one page; keep the other filters identical between calls.'),
 });
+
+/**
+ * The shape every summary-returning tool hands back.
+ *
+ * Exported so the change feed produces byte-identical rows to a search. A
+ * message arriving through two doors with two shapes is a needless source of
+ * caller bugs.
+ */
+export function toEmailSummary(email: Email): EmailSummary {
+    return {
+        id: email.id,
+        threadId: email.threadId,
+        messageId: email.messageId,
+        inReplyTo: email.inReplyTo,
+        references: email.references,
+        subject: email.subject,
+        from: email.from,
+        to: email.to,
+        receivedAt: email.receivedAt,
+        preview: email.preview,
+        hasAttachment: email.hasAttachment,
+        isRead: email.keywords?.['$seen'] === true,
+        isFlagged: email.keywords?.['$flagged'] === true,
+    };
+}
 
 // Tool handlers
 export async function searchEmails(
@@ -127,22 +152,7 @@ export async function searchEmails(
     // Fetch email details
     const emails = await client.getEmails(page.ids);
 
-    // Convert to summary format
-    const summaries: EmailSummary[] = emails.map(email => ({
-        id: email.id,
-        threadId: email.threadId,
-        messageId: email.messageId,
-        inReplyTo: email.inReplyTo,
-        references: email.references,
-        subject: email.subject,
-        from: email.from,
-        to: email.to,
-        receivedAt: email.receivedAt,
-        preview: email.preview,
-        hasAttachment: email.hasAttachment,
-        isRead: email.keywords?.['$seen'] === true,
-        isFlagged: email.keywords?.['$flagged'] === true,
-    }));
+    const summaries: EmailSummary[] = emails.map(toEmailSummary);
 
     return {
         emails: summaries,

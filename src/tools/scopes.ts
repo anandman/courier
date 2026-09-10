@@ -36,6 +36,7 @@ const MAIL_TOOLS = [
     'get_mailbox_details',
     'set_mailbox_role',
     'search_emails',
+    'changes_since',
     'get_email',
     'move_emails',
     'delete_emails',
