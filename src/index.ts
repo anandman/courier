@@ -20,7 +20,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import express from 'express';
 
 import { CourierClientStore } from './auth/client-store.js';
-import { guardUnknownClient, logTokenFailures } from './auth/diagnostics.js';
+import { guardUnknownClient, logRegistrationFailures, logTokenFailures } from './auth/diagnostics.js';
 import { CourierOAuthProvider } from './auth/oauth-provider.js';
 import { TokenService } from './auth/tokens.js';
 import { loadOidcProviderConfig, loadOidcUiConfig, parseAllowedUsers, verifyIdToken } from './auth/oidc.js';
@@ -299,6 +299,7 @@ async function startHttpServer() {
         // before the provider is reached, so neither case is visible from
         // inside the provider.
         app.post('/token', logTokenFailures());
+        app.post('/register', logRegistrationFailures());
         app.get('/authorize', guardUnknownClient(clientStore, renderUnknownClientPage));
 
         app.use(

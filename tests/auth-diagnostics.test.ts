@@ -4,7 +4,11 @@ import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { guardUnknownClient, logTokenFailures } from '../src/auth/diagnostics.js';
+import {
+    guardUnknownClient,
+    logRegistrationFailures,
+    logTokenFailures,
+} from '../src/auth/diagnostics.js';
 import { renderUnknownClientPage } from '../src/ui.js';
 
 /**
@@ -141,6 +145,83 @@ describe('token failure logging', () => {
 
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ access_token: 'granted' });
+    });
+});
+
+describe('registration failure logging', () => {
+    /**
+     * Added 2026-09-16. A hosted client was refused at /register and the only
+     * trace anywhere was `POST /register -> 400`. Registration had succeeded 103
+     * times for other clients, so nothing looked broken -- while the user saw
+     * only "error fetching OAuth configuration" and never reached a consent
+     * screen, because without a client_id there is no /authorize to reach.
+     */
+    async function registerAgainst(
+        handler: (req: express.Request, res: express.Response) => void,
+        body: unknown
+    ): Promise<void> {
+        captureWarnings();
+        const app = express();
+        app.use(express.json());
+        app.post('/register', logRegistrationFailures(), handler);
+        const url = await serve(app);
+        await fetch(`${url}/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+    }
+
+    const reject = (req: express.Request, res: express.Response) => {
+        res.status(400).json({
+            error: 'invalid_client_metadata',
+            error_description: 'redirect_uris is required',
+        });
+    };
+
+    it('names the reason the registration was refused', async () => {
+        await registerAgainst(reject, { client_name: 'ChatGPT' });
+
+        expect(warnings.join('\n')).toContain('invalid_client_metadata');
+        expect(warnings.join('\n')).toContain('redirect_uris is required');
+    });
+
+    it('names the client, so a refusal can be attributed', async () => {
+        await registerAgainst(reject, { client_name: 'ChatGPT' });
+
+        expect(warnings.join('\n')).toContain('ChatGPT');
+    });
+
+    it('lists which metadata keys were offered, to show what was missing', async () => {
+        // The keys are the diagnostic: a rejection is nearly always a field the
+        // client did or did not send.
+        await registerAgainst(reject, { client_name: 'X', grant_types: ['authorization_code'] });
+
+        expect(warnings.join('\n')).toMatch(/metadata keys=\[client_name,grant_types\]/);
+    });
+
+    it('logs keys but never values, since redirect URIs identify an installation', async () => {
+        await registerAgainst(reject, {
+            client_name: 'X',
+            redirect_uris: ['https://chatgpt.com/connector/oauth/SECRETPATH'],
+        });
+
+        expect(warnings.join('\n')).not.toContain('SECRETPATH');
+    });
+
+    it('says nothing when registration succeeds', async () => {
+        await registerAgainst(
+            (_req, res) => res.status(201).json({ client_id: 'abc' }),
+            { client_name: 'X', redirect_uris: ['https://example.com/cb'] }
+        );
+
+        expect(warnings).toHaveLength(0);
+    });
+
+    it('still reports a refusal that carries no error body', async () => {
+        await registerAgainst((_req, res) => res.status(400).end(), { client_name: 'X' });
+
+        expect(warnings.join('\n')).toContain('unspecified');
     });
 });
 
