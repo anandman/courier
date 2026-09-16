@@ -8,6 +8,7 @@ import {
     guardUnknownClient,
     logRegistrationFailures,
     logTokenFailures,
+    normalizeRegistrationMetadata,
 } from '../src/auth/diagnostics.js';
 import { renderUnknownClientPage } from '../src/ui.js';
 
@@ -240,6 +241,80 @@ describe('registration failure logging', () => {
         await registerAgainst((_req, res) => res.status(400).end(), { client_name: 'X' });
 
         expect(warnings.join('\n')).toContain('unspecified');
+    });
+});
+
+describe('tolerating redirect_uris sent as a string', () => {
+    /**
+     * RFC 7591 says array; the SDK rejects a string outright. That refusal is
+     * correct and useless -- no client_id means the client never reaches
+     * /authorize, and registration is the one request it makes exactly once, so
+     * no retry behaves differently.
+     */
+    async function register(body: unknown): Promise<unknown> {
+        captureWarnings();
+        const app = express();
+        app.use(express.json());
+        let seen: unknown;
+        app.post('/register', normalizeRegistrationMetadata(), (req, res) => {
+            seen = (req.body as Record<string, unknown>).redirect_uris;
+            res.status(201).json({ client_id: 'x' });
+        });
+        const url = await serve(app);
+        await fetch(`${url}/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return seen;
+    }
+
+    it('wraps a single string into an array', async () => {
+        const seen = await register({
+            client_name: 'X',
+            redirect_uris: 'https://example.com/cb',
+        });
+
+        expect(seen).toEqual(['https://example.com/cb']);
+    });
+
+    it('leaves a correct array untouched', async () => {
+        const seen = await register({
+            client_name: 'X',
+            redirect_uris: ['https://example.com/a', 'https://example.com/b'],
+        });
+
+        expect(seen).toEqual(['https://example.com/a', 'https://example.com/b']);
+    });
+
+    it('does not invent a redirect from an empty string', async () => {
+        // Better to fail validation than to register a target the client never
+        // asked for.
+        const seen = await register({ client_name: 'X', redirect_uris: '   ' });
+
+        expect(seen).toBe('   ');
+    });
+
+    it('says nothing when the shape was already right', async () => {
+        await register({ client_name: 'X', redirect_uris: ['https://example.com/cb'] });
+
+        expect(warnings).toHaveLength(0);
+    });
+
+    it('logs the coercion, naming the client but never the URI', async () => {
+        await register({ client_name: 'ChatGPT', redirect_uris: 'https://chatgpt.com/SECRET' });
+
+        const line = warnings.join('\n');
+        expect(line).toContain('ChatGPT');
+        expect(line).toContain('string');
+        expect(line).not.toContain('SECRET');
+    });
+
+    it('passes through a body with no redirect_uris at all', async () => {
+        const seen = await register({ client_name: 'X' });
+
+        expect(seen).toBeUndefined();
+        expect(warnings).toHaveLength(0);
     });
 });
 

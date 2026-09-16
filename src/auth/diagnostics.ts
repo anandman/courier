@@ -1,5 +1,7 @@
 /**
- * Middleware that makes OAuth failures legible.
+ * Middleware that makes OAuth work with the clients that actually exist:
+ * failures that explain themselves, and tolerance for input that is malformed
+ * but unambiguous.
  *
  * The SDK's auth router answers a failed exchange with a status and a JSON
  * error, which is correct but leaves nothing in the log. Both handlers here sit
@@ -44,6 +46,45 @@ export function logTokenFailures(): express.RequestHandler {
                     ` (grant=${grantType}, status=${res.statusCode})`
             );
         });
+
+        next();
+    };
+}
+
+/**
+ * Accepts `redirect_uris` sent as a bare string.
+ *
+ * RFC 7591 says it is an array, and the SDK rejects a string outright with
+ * `invalid_client_metadata`. That refusal is correct and useless: the client
+ * gets no client_id, so it never reaches /authorize, so the user sees only a
+ * vague connection error with nothing to act on -- and a registration is the
+ * one request a client makes exactly once, so there is no retry that behaves
+ * differently.
+ *
+ * A single URI in a string is not ambiguous. Wrapping it costs one line and
+ * keeps a client working that would otherwise be permanently unable to connect,
+ * which is the whole trade: strictness here buys nothing that the schema does
+ * not already enforce on the value itself.
+ *
+ * Logged when it happens, because a client sending the wrong shape is worth
+ * knowing about even when it is tolerated -- and the name, never the URI, since
+ * a redirect URI identifies an installation.
+ */
+export function normalizeRegistrationMetadata(): express.RequestHandler {
+    return (req, _res, next) => {
+        const body = req.body as Record<string, unknown> | undefined;
+        const uris = body?.redirect_uris;
+
+        // An empty string is not a URI. Leave it to fail validation rather than
+        // inventing a redirect target the client never asked for.
+        if (body && typeof uris === 'string' && uris.trim() !== '') {
+            const name = typeof body.client_name === 'string' ? body.client_name : 'unnamed';
+            body.redirect_uris = [uris];
+            console.warn(
+                `[auth] ${JSON.stringify(name)} sent redirect_uris as a string; ` +
+                    'wrapped it in an array (RFC 7591 requires an array)'
+            );
+        }
 
         next();
     };
