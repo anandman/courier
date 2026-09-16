@@ -79,7 +79,12 @@ export function logRegistrationFailures(): express.RequestHandler {
         res.json = (payload: unknown) => {
             const error = payload as { error?: unknown; error_description?: unknown } | null;
             if (typeof error?.error === 'string') failure = error.error;
-            if (typeof error?.error_description === 'string') description = error.error_description;
+            // Flattened: the SDK returns a pretty-printed Zod issue list, and a
+            // multi-line warning is one grep away from looking truncated --
+            // which is exactly how it was first misread.
+            if (typeof error?.error_description === 'string') {
+                description = error.error_description.replace(/\s+/g, ' ').trim();
+            }
             return json(payload);
         };
 

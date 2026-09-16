@@ -209,6 +209,24 @@ describe('registration failure logging', () => {
         expect(warnings.join('\n')).not.toContain('SECRETPATH');
     });
 
+    it('flattens a multi-line reason onto one line, so grep finds all of it', async () => {
+        // The SDK returns a pretty-printed Zod issue list. Left as-is, the
+        // warning spans a dozen journal lines and a grep shows only the first,
+        // which reads as truncation -- as it did the first time this was used.
+        await registerAgainst(
+            (_req, res) =>
+                res.status(400).json({
+                    error: 'invalid_client_metadata',
+                    error_description: '[\n  {\n    "path": [\n      "redirect_uris"\n    ]\n  }\n]',
+                }),
+            { client_name: 'X' }
+        );
+
+        const line = warnings.find((w) => w.includes('invalid_client_metadata'))!;
+        expect(line).not.toContain('\n');
+        expect(line).toContain('redirect_uris');
+    });
+
     it('says nothing when registration succeeds', async () => {
         await registerAgainst(
             (_req, res) => res.status(201).json({ client_id: 'abc' }),
