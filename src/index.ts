@@ -36,7 +36,8 @@ import { TOOL_GROUP_IDS } from './tools/groups.js';
 import { handleStatelessMcpRequest } from './http-transport.js';
 import { createMcpServer } from './mcp-server.js';
 import { createVaultStore } from './vault/index.js';
-import { runWithRequestContext } from './request-context.js';
+import { describeAddresses } from './net-names.js';
+import { runWithPeerAddress, runWithRequestContext } from './request-context.js';
 import { createUserAccountManager } from './user-accounts.js';
 import {
     renderLoginPage,
@@ -213,6 +214,15 @@ async function startHttpServer() {
     app.set('trust proxy', 'loopback');
 
     app.use(express.urlencoded({ extended: false }));
+
+    // Record where each request came from, before the bearer-auth middleware
+    // runs: verifyAccessToken stamps the client's last-seen source and is
+    // called well before the MCP handler builds the main request context.
+    app.use((req, _res, next) => {
+        const forwarded = getHeaderValue(req.headers['x-forwarded-for']);
+        const source = (forwarded ?? req.socket.remoteAddress ?? '').split(',')[0].trim();
+        runWithPeerAddress(source || undefined, next);
+    });
 
     // Opt-in access log. Courier sits behind Tailscale Funnel, which keeps no
     // request log of its own, so without this there is no way to tell whether a
@@ -536,6 +546,19 @@ async function startHttpServer() {
               ])
             : [[], []];
 
+        // Name the machines. A stored address answers "which machine" only for
+        // someone who has memorised their own address plan.
+        const names = await describeAddresses(
+            [...clients, ...unattributed].map((client) => client.lastSeenFrom)
+        );
+        const named = (list: typeof clients) =>
+            list.map((client) => ({
+                ...client,
+                lastSeenFrom: client.lastSeenFrom
+                    ? (names.get(client.lastSeenFrom) ?? client.lastSeenFrom)
+                    : undefined,
+            }));
+
         res.status(200).send(
             renderUiPage(
                 uiUser,
@@ -543,8 +566,8 @@ async function startHttpServer() {
                 defaultAccount,
                 selectedAccount,
                 manager.getDisabledToolGroups(),
-                clients,
-                unattributed
+                named(clients),
+                named(unattributed)
             )
         );
     });

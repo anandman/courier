@@ -174,3 +174,62 @@ describe('client list UI', () => {
         expect(html).toContain('&lt;img');
     });
 });
+
+describe('recording which machine a client runs on', () => {
+    /**
+     * Five permanent clients are named "Claude Code", "Codex", "Open WebUI" --
+     * software that runs on more than one machine. The name alone cannot answer
+     * "which client, on which machine", and this deployment has clients on at
+     * least three.
+     */
+    it('remembers where a client was last seen', async () => {
+        await register('c1', 'Codex');
+        await store.promoteClient('c1', 'anand@example.com');
+
+        await store.touchClient('c1', '100.64.0.2');
+
+        const [client] = await store.listClientsForOwner('anand@example.com');
+        expect(client.lastSeenFrom).toBe('100.64.0.2');
+    });
+
+    it('updates when the same client appears from a different machine', async () => {
+        // The rate limit on last-seen writes must not hide a client moving, or
+        // the field answers the wrong question the moment it matters.
+        await register('c1', 'Codex');
+        await store.promoteClient('c1', 'anand@example.com');
+
+        await store.touchClient('c1', '100.64.0.1');
+        await store.touchClient('c1', '100.64.0.2');
+
+        const [client] = await store.listClientsForOwner('anand@example.com');
+        expect(client.lastSeenFrom).toBe('100.64.0.2');
+    });
+
+    it('keeps the last known source when a request carries none', async () => {
+        await register('c1', 'Codex');
+        await store.promoteClient('c1', 'anand@example.com');
+
+        await store.touchClient('c1', '100.64.0.2');
+        await store.touchClient('c1', undefined);
+
+        const [client] = await store.listClientsForOwner('anand@example.com');
+        expect(client.lastSeenFrom).toBe('100.64.0.2');
+    });
+
+    it('shows the machine in the settings UI', async () => {
+        await register('c1', 'Codex');
+        await store.promoteClient('c1', 'anand@example.com');
+        await store.touchClient('c1', '100.64.0.2');
+
+        const html = renderUiPage(
+            { userId: 'anand@example.com', email: 'anand@example.com' },
+            [],
+            null,
+            null,
+            [],
+            await store.listClientsForOwner('anand@example.com')
+        );
+
+        expect(html).toContain('100.64.0.2');
+    });
+});

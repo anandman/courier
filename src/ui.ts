@@ -788,6 +788,7 @@ export interface UiClient {
     ownerId?: string;
     promotedAt?: number;
     lastSeenAt?: number;
+    lastSeenFrom?: string;
 }
 
 /** "3 minutes ago" style relative time; absolute dates are noise at this scale. */
@@ -883,7 +884,11 @@ export function renderUiPage(
         return `<div class="client">
             <div class="client-main">
               <span class="client-name">${name}</span>
-              <span class="client-meta">Authorized ${escapeHtml(relativeTime(client.promotedAt))} · Last used ${escapeHtml(relativeTime(client.lastSeenAt))}</span>
+              <span class="client-meta">Authorized ${escapeHtml(relativeTime(client.promotedAt))} · Last used ${escapeHtml(relativeTime(client.lastSeenAt))}${
+                  // Which machine, not just which client: several of these are
+                  // named for software that runs on more than one.
+                  client.lastSeenFrom ? ` · from ${escapeHtml(client.lastSeenFrom)}` : ''
+              }</span>
               ${unattributed ? '<span class="client-meta">Authorized before Courier recorded which user connected it.</span>' : ''}
             </div>
             <form method="post" action="/ui/clients/revoke">

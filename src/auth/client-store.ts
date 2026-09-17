@@ -40,6 +40,8 @@ interface StoredClient {
     promotedAt?: number;
     /** Last time this client presented a valid access token. */
     lastSeenAt?: number;
+    /** Where it presented it from. A client name says nothing about which machine. */
+    lastSeenFrom?: string;
 }
 
 /** A promoted client with the metadata the settings UI needs to describe it. */
@@ -50,6 +52,7 @@ export interface AuthorizedClient {
     registeredAt?: number;
     promotedAt?: number;
     lastSeenAt?: number;
+    lastSeenFrom?: string;
 }
 
 interface ClientFileData {
@@ -207,17 +210,20 @@ export class CourierClientStore implements OAuthRegisteredClientsStore {
     }
 
     /** Records that a client is still in use. Best-effort: never blocks a request. */
-    async touchClient(clientId: string): Promise<void> {
+    async touchClient(clientId: string, source?: string): Promise<void> {
         const clients = await this.load();
         const entry = clients.get(clientId);
         if (!entry || entry.expiresAt !== null) return;
 
         // Only write when the stamp is meaningfully stale. A busy client would
         // otherwise rewrite the whole store on every single request.
+        // Also write when the source changes, so a client moving between
+        // machines is visible rather than hidden by the rate limit.
         const now = Date.now();
-        if (entry.lastSeenAt !== undefined && now - entry.lastSeenAt < LAST_SEEN_RESOLUTION_MS) return;
+        const fresh = entry.lastSeenAt !== undefined && now - entry.lastSeenAt < LAST_SEEN_RESOLUTION_MS;
+        if (fresh && (source === undefined || source === entry.lastSeenFrom)) return;
 
-        clients.set(clientId, { ...entry, lastSeenAt: now });
+        clients.set(clientId, { ...entry, lastSeenAt: now, lastSeenFrom: source ?? entry.lastSeenFrom });
         await this.flush(clients);
     }
 
@@ -234,6 +240,7 @@ export class CourierClientStore implements OAuthRegisteredClientsStore {
                 registeredAt: entry.registeredAt,
                 promotedAt: entry.promotedAt,
                 lastSeenAt: entry.lastSeenAt,
+                lastSeenFrom: entry.lastSeenFrom,
             }))
             .sort((a, b) => (b.lastSeenAt ?? b.promotedAt ?? 0) - (a.lastSeenAt ?? a.promotedAt ?? 0));
     }

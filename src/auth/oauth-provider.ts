@@ -13,6 +13,7 @@ import type { OAuthClientInformationFull, OAuthTokens } from '@modelcontextproto
 import type { CourierClientStore } from './client-store.js';
 import { verifyIdToken, type OidcProviderConfig } from './oidc.js';
 import type { TokenService } from './tokens.js';
+import { getPeerAddress } from '../request-context.js';
 
 export interface CourierOAuthProviderOptions {
     clientsStore: CourierClientStore;
@@ -330,7 +331,9 @@ export class CourierOAuthProvider implements OAuthServerProvider {
 
         // Best-effort liveness stamp so the settings UI can show which clients
         // are actually in use. Never allowed to fail a request.
-        void this.options.clientsStore.touchClient(verified.clientId).catch(() => undefined);
+        void this.options.clientsStore
+            .touchClient(verified.clientId, getPeerAddress())
+            .catch(() => undefined);
 
         return {
             token,
