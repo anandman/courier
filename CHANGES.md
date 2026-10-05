@@ -1,5 +1,24 @@
 # Unreleased Changes (vs. GitHub `main` @ `2a0a636`)
 
+## Breaking: renamed again, to Courier
+
+**Email Courier** is now simply **Courier**. The previous name undersold it:
+the DAV path carries calendar, contacts and tasks, so naming it after email
+described one part of the whole. A CLI is also planned, which rules out any
+`-mcp` suffix for the same reason.
+
+| Was | Now |
+|---|---|
+| package `email-courier` | `courier` |
+| command `email-courier-mcp` | `courier` |
+| MCP server name `email-courier` | `courier` |
+
+**The env vars are unchanged** — they were already `COURIER_*` from the previous
+rename, which is why that prefix was chosen.
+
+Config and state directories are **not** moved by this change; see the
+deployment notes for the path migration.
+
 ## Breaking: renamed to Email Courier
 
 The project was **Fastmail Courier**; it is now **Email Courier**. Fastmail asked
