@@ -6,7 +6,7 @@ describe('setup UI', () => {
     it('renders a styled OIDC login page', () => {
         const html = renderLoginPage('oidc');
 
-        expect(html).toContain('Email Courier');
+        expect(html).toContain('Courier');
         expect(html).toContain('Continue securely');
         expect(html).toContain('href="/auth/login"');
         expect(html).toContain('Content-Security-Policy');

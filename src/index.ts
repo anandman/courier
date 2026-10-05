@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Email Courier
+ * Courier
  * 
  * An MCP server providing email, contacts, calendar and task tools over JMAP and CalDAV.
  * Works with Claude CLI, Gemini CLI, and other MCP-compatible clients.
@@ -742,7 +742,7 @@ async function startHttpServer() {
     });
 
     app.listen(port, host, () => {
-        console.log(`Email Courier listening on http://${host}:${port}${path}`);
+        console.log(`Courier listening on http://${host}:${port}${path}`);
     });
 }
 

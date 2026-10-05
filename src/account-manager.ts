@@ -1,5 +1,5 @@
 /**
- * Multi-account configuration management for Email Courier MCP server
+ * Multi-account configuration management for Courier MCP server
  * 
  * Account configuration can be loaded from:
  * - Environment variables (COURIER_API_TOKEN, COURIER_CALDAV_PASSWORD)

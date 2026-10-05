@@ -691,7 +691,7 @@ export class CalDAVClient {
         const lines: string[] = [
             'BEGIN:VCALENDAR',
             'VERSION:2.0',
-            'PRODID:-//Email Courier//CalDAV Client//EN',
+            'PRODID:-//Courier//CalDAV Client//EN',
             'BEGIN:VTODO',
             `UID:${uid}`,
             `DTSTAMP:${timestamp}`,
@@ -980,7 +980,7 @@ export class CalDAVClient {
         const lines: string[] = [
             'BEGIN:VCALENDAR',
             'VERSION:2.0',
-            'PRODID:-//Email Courier//CalDAV Client//EN',
+            'PRODID:-//Courier//CalDAV Client//EN',
             'BEGIN:VEVENT',
             `UID:${uid}`,
             `DTSTAMP:${timestamp}`,

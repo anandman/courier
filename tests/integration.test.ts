@@ -1,5 +1,5 @@
 /**
- * Integration tests for Email Courier
+ * Integration tests for Courier
  * 
  * These tests run against real Fastmail accounts.
  * Configure your test accounts in .env.test (copy from .env.test.example)
@@ -33,7 +33,7 @@ import {
     deleteContact,
 } from '../src/tools/index.js';
 
-describe('Email Courier', () => {
+describe('Courier', () => {
     beforeAll(() => {
         if (!testConfig.isConfigured) {
             throw new Error(
@@ -190,7 +190,7 @@ describe('Email Courier', () => {
             const result = await sendEmail({
                 to: testConfig.recipient,
                 subject: `MCP Test Email - ${new Date().toISOString()}`,
-                body: 'This is a test email from Email Courier integration tests.',
+                body: 'This is a test email from Courier integration tests.',
             });
 
             expect(result.success).toBe(true);

@@ -710,7 +710,7 @@ function centerPage(title: string, message: string, action = ''): string {
 export function renderLoginPage(authMode: AuthMode): string {
     if (authMode === 'proxy') {
         return documentShell(
-            'Email Courier',
+            'Courier',
             `<main class="center-card">
               ${brandMark()}
               <h1>Authentication required</h1>
@@ -722,7 +722,7 @@ export function renderLoginPage(authMode: AuthMode): string {
 
     if (authMode === 'oidc') {
         return centerPage(
-            'Email Courier',
+            'Courier',
             'Connect and manage the accounts available to your private MCP service.',
             `<a class="button primary" href="/auth/login">
               ${checkIcon}
@@ -732,7 +732,7 @@ export function renderLoginPage(authMode: AuthMode): string {
     }
 
     return documentShell(
-        'Email Courier',
+        'Courier',
         `<main class="center-card">
           ${brandMark()}
           <h1>Setup unavailable</h1>
@@ -755,13 +755,13 @@ export function renderLoginPage(authMode: AuthMode): string {
  */
 export function renderUnknownClientPage(): string {
     return documentShell(
-        'Email Courier',
+        'Courier',
         `<main class="center-card">
           ${brandMark()}
           <h1>This application is no longer authorized</h1>
           <p>It is asking for access using a registration Courier does not recognize — usually because that authorization was revoked, or the server's client registry was reset.</p>
           <div class="notice">
-            <strong>To reconnect:</strong> remove Email Courier from the application's
+            <strong>To reconnect:</strong> remove Courier from the application's
             settings, then add it again. The application will register itself afresh.
             Some apps cache the old registration until they are fully restarted.
           </div>
@@ -772,7 +772,7 @@ export function renderUnknownClientPage(): string {
 
 export function renderNoVaultPage(): string {
     return documentShell(
-        'Email Courier',
+        'Courier',
         `<main class="center-card">
           ${brandMark()}
           <h1>Encrypted storage unavailable</h1>
@@ -924,13 +924,13 @@ export function renderUiPage(
     const hasStoredCaldavPassword = Boolean(selectedAccount?.caldav?.password);
 
     return documentShell(
-        'Email Courier Setup',
+        'Courier Setup',
         `<main class="shell">
           <header class="topbar">
             <div class="brand">
               ${brandMark()}
               <div class="brand-copy">
-                <p class="brand-name">Email Courier</p>
+                <p class="brand-name">Courier</p>
                 <p class="brand-tagline">Private MCP account gateway</p>
               </div>
             </div>
@@ -967,7 +967,7 @@ export function renderUiPage(
                   <h2 id="account-form-heading">${editing ? 'Update account' : 'Add an account'}</h2>
                   <p class="card-intro">${editing
                       ? 'Leave either credential blank to keep its current value.'
-                      : 'Connect another account to Email Courier.'}</p>
+                      : 'Connect another account to Courier.'}</p>
                 </div>
               </div>
 
