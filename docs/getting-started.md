@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks through setting up Email Courier for use with AI clients.
+This guide walks through setting up Courier for use with AI clients.
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ npm run build
 1. Log in to [Fastmail](https://www.fastmail.com)
 2. Go to **Settings → Privacy & Security → Integrations**
 3. Under **API tokens**, click **New API token**
-4. Name it (e.g., "Email Courier") and select scopes:
+4. Name it (e.g., "Courier") and select scopes:
    - `Email` — read/write email
    - `Contacts` — for contact tools
 5. Copy the token (starts with `fmu1-`)
@@ -37,7 +37,7 @@ npm run build
 
 1. In Fastmail **Settings → Privacy & Security → Integrations**
 2. Scroll to **App passwords** → **New App Password**
-3. Name it (e.g., "Email Courier CalDAV")
+3. Name it (e.g., "Courier CalDAV")
 4. Copy the generated password
 
 ## Choose a mode

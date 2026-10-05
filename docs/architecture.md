@@ -1,14 +1,14 @@
 # Architecture
 
-This document describes the design of Email Courier for contributors and AI assistants.
+This document describes the design of Courier for contributors and AI assistants.
 
 ## Overview
 
-Email Courier is an MCP server that bridges AI assistants (Claude, Gemini) with Fastmail's email, calendar, and task services.
+Courier is an MCP server that bridges AI assistants (Claude, Gemini) with Fastmail's email, calendar, and task services.
 
 ```
 ┌─────────────────┐      MCP       ┌───────────────────┐      JMAP      ┌──────────────┐
-│  AI Assistant   │◄──────────────►│  Email Courier │◄──────────────►│   Fastmail   │
+│  AI Assistant   │◄──────────────►│  Courier │◄──────────────►│   Fastmail   │
 │ (Claude/Gemini) │                │    (MCP Server)   │◄──────────────►│   Services   │
 └─────────────────┘                └───────────────────┘     CalDAV     └──────────────┘
 ```
@@ -49,7 +49,7 @@ Email Courier is an MCP server that bridges AI assistants (Claude, Gemini) with 
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│                    Email Courier                           │
+│                    Courier                           │
 ├───────────────────────────────────────────────────────────────┤
 │                                                               │
 │  JMAP Client                       CalDAV Client              │

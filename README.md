@@ -1,4 +1,4 @@
-# Email Courier
+# Courier
 
 An MCP server that connects AI assistants to your email, contacts, calendar, and
 tasks — over JMAP for mail and contacts, CalDAV for calendar and tasks. Tested
@@ -7,7 +7,7 @@ against Fastmail; works with any JMAP provider.
 ## Quick Install
 
 ```bash
-git clone https://github.com/anandman/email-courier.git
+git clone https://github.com/anandman/courier.git
 cd email-courier
 npm install
 npm run build
@@ -31,7 +31,7 @@ npm run build
 
 ## Remote Hosting (Optional)
 
-Email Courier defaults to local `stdio` transport. To host it remotely over Streamable HTTP:
+Courier defaults to local `stdio` transport. To host it remotely over Streamable HTTP:
 
 ```bash
 export MCP_TRANSPORT="http"

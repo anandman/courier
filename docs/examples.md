@@ -1,6 +1,6 @@
 # Examples
 
-Common prompts and workflows for Email Courier.
+Common prompts and workflows for Courier.
 
 ## Email Prompts
 

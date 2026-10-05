@@ -1,6 +1,6 @@
 # Tools Reference
 
-Complete reference for all 34 MCP tools provided by Email Courier.
+Complete reference for all 34 MCP tools provided by Courier.
 
 ## Token-Smart Usage
 

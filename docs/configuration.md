@@ -1,6 +1,6 @@
 # Configuration
 
-Detailed configuration options for Email Courier.
+Detailed configuration options for Courier.
 
 ## Environment Variables
 
@@ -210,7 +210,7 @@ Note: You'll still need the JMAP token for email features.
 
 ## Remote Hosting (Streamable HTTP)
 
-To run Email Courier as a remote HTTP server (while keeping local `stdio` as the default), set:
+To run Courier as a remote HTTP server (while keeping local `stdio` as the default), set:
 
 ```bash
 export MCP_TRANSPORT="http"
