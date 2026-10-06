@@ -32,6 +32,28 @@ function getClient() {
 
 export const listCalendarsSchema = z.object({});
 
+/**
+ * Inviting people is an outward-facing act, like sending mail.
+ *
+ * `attendees` records who is invited; `notify` decides whether they are told,
+ * and defaults to false. One tool rather than two because the arguments are
+ * identical either way -- only a side effect differs -- and because
+ * `notify: false` is enforceable: RFC 6638 SCHEDULE-AGENT=NONE suppresses the
+ * server's invitations, verified against Fastmail with a control.
+ */
+const attendeeFields = {
+    attendees: z
+        .array(z.string())
+        .optional()
+        .describe('Email addresses to invite. Recorded on the event. Nobody is emailed unless notify is true.'),
+    notify: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Send calendar invitations to the attendees. Default false — this emails real people, so set it deliberately.'),
+    organizer: z.string().optional().describe('Organiser address. Defaults to the account.'),
+};
+
 export async function listCalendars(): Promise<{
     calendars: Array<{
         url: string;
@@ -322,10 +344,14 @@ export const createEventSchema = z.object({
     categories: z.array(z.string()).optional().describe('Categories/tags for the event'),
     status: z.enum(['tentative', 'confirmed', 'cancelled']).optional().describe('Event status (default: confirmed)'),
     recurrenceRule: z.string().optional().describe('Recurrence rule (RRULE format, e.g., FREQ=WEEKLY;BYDAY=MO)'),
+    ...attendeeFields,
 });
 
 export async function createEvent(params: z.infer<typeof createEventSchema>): Promise<{
     event: CalendarEvent;
+    /** True only when invitations were actually sent. */
+    notified: boolean;
+    attendees: string[];
     message: string;
 }> {
     const client = getClient();
@@ -349,13 +375,28 @@ export async function createEvent(params: z.infer<typeof createEventSchema>): Pr
         categories: params.categories,
         status: params.status,
         recurrenceRule: params.recurrenceRule,
+        attendees: params.attendees,
+        notify: params.notify,
+        organizer: params.organizer,
     };
 
     const event = await client.createEvent(calendarUrl, eventData);
 
+    // Say which happened. "Created" is ambiguous when the difference is whether
+    // real people were emailed, and that is the part worth being sure about.
+    const invited = params.attendees?.length ?? 0;
+    const note =
+        invited === 0
+            ? ''
+            : params.notify
+              ? ` Invitations were sent to ${invited} attendee${invited === 1 ? '' : 's'}.`
+              : ` ${invited} attendee${invited === 1 ? ' was' : 's were'} recorded on the event but NOT notified; call again with notify: true to invite them.`;
+
     return {
         event,
-        message: `Event "${params.summary}" created successfully`,
+        notified: Boolean(params.notify && invited > 0),
+        attendees: params.attendees ?? [],
+        message: `Event "${params.summary}" created.${note}`,
     };
 }
 

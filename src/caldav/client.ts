@@ -1011,6 +1011,22 @@ export class CalDAVClient {
             lines.push(`CATEGORIES:${event.categories.join(',')}`);
         }
 
+        // Attendees. SCHEDULE-AGENT decides whether the server emails them
+        // (RFC 6638): NONE keeps it silent, SERVER sends iTIP invitations.
+        // Verified against Fastmail with a control on 2026-10-05.
+        if (event.attendees && event.attendees.length > 0) {
+            const organizer = event.organizer || this.config.username;
+            if (organizer) {
+                lines.push(`ORGANIZER:mailto:${organizer}`);
+            }
+            const agent = event.notify ? '' : ';SCHEDULE-AGENT=NONE';
+            for (const attendee of event.attendees) {
+                lines.push(
+                    `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE${agent}:mailto:${attendee}`
+                );
+            }
+        }
+
         const status = event.status || 'confirmed';
         lines.push(`STATUS:${status.toUpperCase()}`);
 

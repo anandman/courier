@@ -421,7 +421,7 @@ const baseTools: ToolDefinition[] = [
     },
     {
         name: 'create_event',
-        description: 'Create a new calendar event (meeting, appointment, etc.)',
+        description: 'Create a calendar event. Attendees are RECORDED but NOT emailed unless notify is true — inviting people is outward-facing, like sending mail, so it must be asked for deliberately. The result says which happened.',
         inputSchema: createEventSchema,
         handler: (params) => createEvent(createEventSchema.parse(params)),
     },

@@ -220,6 +220,26 @@ export interface EventQueryOptions {
 export interface EventCreate {
     /** Event summary/title (required) */
     summary: string;
+    /**
+     * People to invite. Recorded on the event in every case.
+     *
+     * Whether they are *told* is governed by `notify`, which defaults to false:
+     * sending calendar invitations is as outward-facing as sending mail, and an
+     * agent should not do it as a side effect of creating an event.
+     */
+    attendees?: string[];
+    /**
+     * Send invitations to the attendees. Default false.
+     *
+     * Implemented with RFC 6638 SCHEDULE-AGENT: NONE suppresses the server's
+     * iTIP messages, SERVER (the CalDAV default) sends them. Verified against
+     * Fastmail on 2026-10-05 with a control -- NONE produced no invitation, the
+     * default produced one -- so `notify: false` is a guarantee rather than a
+     * hope.
+     */
+    notify?: boolean;
+    /** Address organising the event. Defaults to the account. */
+    organizer?: string;
     /** Detailed description */
     description?: string;
     /** Event location */
