@@ -110,6 +110,7 @@ import {
     deleteEvent,
 } from './calendar.js';
 import { changesSince, changesSinceSchema } from './changes.js';
+import { getAttachment, getAttachmentSchema, readThread, readThreadSchema } from './thread.js';
 import {
     draftEmail,
     draftEmailSchema,
@@ -255,6 +256,20 @@ const baseTools: ToolDefinition[] = [
             'Incremental mail changes since a previous state, in ONE request -- use this to poll instead of repeating searches. Omit state to get a starting point and no changes, flagged bootstrapped: true -- that means NO HISTORY exists before it, not that nothing changed; cover the earlier window with search_emails first. Returns created/updated messages, destroyedIds, and departedIds (changed but now outside the requested mailboxes). If hasMoreChanges is true, call again with the returned state. Throws rather than returning empty when the state is too old to compute changes from; treat that as "resync", never as "nothing changed". Note that failure arrives as an MCP tool error (isError on the envelope, message in the body), NOT as a JSON-RPC error -- a client that only unwraps content[].text will read it as a result with no created/updated keys, i.e. an empty delta, which is the one reading that corrupts a cache.',
         inputSchema: changesSinceSchema,
         handler: (params) => changesSince(changesSinceSchema.parse(params)),
+    },
+    {
+        name: 'read_thread',
+        description:
+            'Read a whole conversation in ONE call, oldest first, from any threadId returned by search_emails. Use this instead of calling get_email per message. Set includeBodies false for a cheap outline. Returns total vs returned so a truncated thread is visible.',
+        inputSchema: readThreadSchema,
+        handler: (params) => readThread(readThreadSchema.parse(params)),
+    },
+    {
+        name: 'get_attachment',
+        description:
+            'Download an attachment\u2019s content. get_email lists attachments with their blobId, name, type and size; this returns the bytes \u2014 text inline, anything else base64. Omit blobId when the message has exactly one attachment. Capped by maxBytes, and says when it truncated.',
+        inputSchema: getAttachmentSchema,
+        handler: (params) => getAttachment(getAttachmentSchema.parse(params)),
     },
     {
         name: 'get_email',
@@ -459,6 +474,8 @@ export {
     draftEmail,
     draftReply,
     draftForward,
+    readThread,
+    getAttachment,
     createMailbox,
     renameMailbox,
     deleteMailbox,

@@ -43,6 +43,8 @@ const MAIL_TOOLS = [
     'search_emails',
     'changes_since',
     'get_email',
+    'read_thread',
+    'get_attachment',
     'move_emails',
     'delete_emails',
     'mark_emails',

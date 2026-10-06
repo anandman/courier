@@ -42,6 +42,8 @@ export const TOOL_GROUPS: ToolGroup[] = [
             'search_emails',
             'changes_since',
             'get_email',
+            'read_thread',
+            'get_attachment',
             'draft_email',
             'draft_reply',
             'draft_forward',
