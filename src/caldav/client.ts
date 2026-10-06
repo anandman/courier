@@ -161,8 +161,59 @@ export class CalDAVClient {
             defaultAccountType: 'caldav',
         });
 
-        await this.client.login();
+        try {
+            await this.client.login();
+        } catch (error) {
+            throw new Error(await this.explainLoginFailure(error));
+        }
         this.connected = true;
+    }
+
+    /**
+     * Turns a login failure into something that names the actual cause.
+     *
+     * tsdav reports a rejected credential as "cannot find principalUrl", which
+     * reads like a DAV path or discovery problem rather than an auth one. A
+     * consumer lost 35 minutes to that exactly: their CalDAV app password had
+     * been revoked, mail tools on the same connection kept working because
+     * those use a different credential, and the message sent them looking for a
+     * server-side regression.
+     *
+     * So ask the server directly what it thinks of the credential, and say so.
+     * Falls back to the original message if the probe itself fails -- a worse
+     * error here must not replace a real one.
+     */
+    private async explainLoginFailure(error: unknown): Promise<string> {
+        const original = error instanceof Error ? error.message : String(error);
+
+        try {
+            const auth =
+                'Basic ' +
+                Buffer.from(`${this.config.username}:${this.config.password}`).toString('base64');
+            // Probe /dav/, not the server root: Fastmail answers the root with
+            // 404 regardless of credentials and only challenges under /dav/.
+            // Measured — the root would have reported an auth failure as a path
+            // problem, which is the confusion this method exists to remove.
+            const base = new URL('/dav/', this.config.serverUrl!).href;
+            const response = await fetch(base, {
+                method: 'PROPFIND',
+                headers: { Authorization: auth, Depth: '0', 'Content-Type': 'application/xml' },
+                body: '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>',
+            });
+
+            if (response.status === 401 || response.status === 403) {
+                return (
+                    `CalDAV rejected the credentials for "${this.config.username}" (HTTP ${response.status}). ` +
+                    'The app password is wrong, expired, or has been revoked — this is an authentication ' +
+                    'failure, not a server or path problem. Note that mail may keep working, since it uses ' +
+                    `a separate credential. Original error: ${original}`
+                );
+            }
+
+            return `CalDAV login failed although the server accepted the credentials (HTTP ${response.status}): ${original}`;
+        } catch {
+            return original;
+        }
     }
 
     /**

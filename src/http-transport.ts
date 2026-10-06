@@ -19,14 +19,25 @@ const INITIALIZE_LOG_ENABLED =
 function logInitialize(body: unknown): void {
     if (!INITIALIZE_LOG_ENABLED) return;
 
-    const message = body as { method?: unknown; params?: { clientInfo?: unknown; protocolVersion?: unknown } };
+    const message = body as {
+        method?: unknown;
+        params?: { clientInfo?: unknown; protocolVersion?: unknown; capabilities?: unknown };
+    };
     if (message?.method !== 'initialize') return;
 
     const info = message.params?.clientInfo as { name?: string; version?: string } | undefined;
     const clientId = getRequestContext()?.authInfo?.clientId;
+    // Which capabilities a client declares decides what this server may do with
+    // it -- elicitation in particular, since a confirmation prompt is only
+    // possible where the client can show one. Names only; the objects carry no
+    // user data but there is no reason to log their contents.
+    const declared = Object.keys(
+        (message.params?.capabilities as Record<string, unknown> | undefined) ?? {}
+    ).sort();
     console.log(
         `[mcp] initialize from ${info?.name ?? 'unnamed'}${info?.version ? ` ${info.version}` : ''}` +
             ` protocol=${String(message.params?.protocolVersion ?? 'unspecified')}` +
+            ` caps=[${declared.join(',')}]` +
             `${clientId ? ` client=${clientId}` : ''}`
     );
 }
