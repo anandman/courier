@@ -110,6 +110,7 @@ import {
     deleteEvent,
 } from './calendar.js';
 import { changesSince, changesSinceSchema } from './changes.js';
+import { draftEmail, draftEmailSchema } from './draft.js';
 
 // Tool definition type
 export interface ToolDefinition {
@@ -256,6 +257,13 @@ const baseTools: ToolDefinition[] = [
     },
 
     // Send & Forward
+    {
+        name: 'draft_email',
+        description:
+            'Create a draft in the Drafts folder WITHOUT sending it — use this whenever a human should read or edit the message before it goes out. mode: new (default), reply, or forward; reply and forward take emailId and inherit the recipients, subject and threading headers from the original, so a reply stays in its conversation. Nothing is transmitted.',
+        inputSchema: draftEmailSchema,
+        handler: (params) => draftEmail(draftEmailSchema.parse(params)),
+    },
     {
         name: 'send_email',
         description: 'Compose and send a new email (no email bodies read).',
@@ -427,6 +435,7 @@ export {
     getCurrentAccount,
     listMailboxes,
     changesSince,
+    draftEmail,
     createMailbox,
     renameMailbox,
     deleteMailbox,
