@@ -37,7 +37,7 @@ export async function getEmail(
     body: string;
     htmlBody: string | null;
     hasAttachment: boolean;
-    attachments: Array<{ name: string | null; type: string; size: number }>;
+    attachments: Array<{ blobId: string | null; name: string | null; type: string; size: number }>;
     keywords: string[];
     account: string | null;
 }> {
@@ -76,6 +76,10 @@ export async function getEmail(
 
     // Extract attachments
     const attachments = (email.attachments || []).map(att => ({
+        // blobId is what get_attachment needs to choose between several
+        // attachments. Without it the two tools did not compose, and a caller
+        // with a multi-attachment message had no way to name the one it meant.
+        blobId: att.blobId,
         name: att.name,
         type: att.type,
         size: att.size,
