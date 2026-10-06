@@ -37,7 +37,7 @@ const common = {
         .string()
         .optional()
         .describe(
-            'Address to send as. Must be one of this account\'s identities. For a reply it defaults to whichever identity the original was addressed to.'
+            'Address to send as. A catch-all domain permits any address on it. Any value is accepted for a draft; the result reports sendable: false when no identity authorises it.'
         ),
 };
 
@@ -71,6 +71,11 @@ export const draftForwardSchema = z.object({
 
 export interface DraftResult {
     emailId: string;
+    /**
+     * False when no identity authorises the From address. The draft still
+     * exists and is editable; sending it would be refused by the provider.
+     */
+    sendable: boolean;
     kind: 'new' | 'reply' | 'forward';
     from: string;
     to: string[];
@@ -150,12 +155,15 @@ export async function draftEmail(params: z.infer<typeof draftEmailSchema>): Prom
 
     return {
         emailId: created.emailId,
+        sendable: created.sendable,
         kind: 'new',
         from: created.from,
         to,
         subject: params.subject,
         threaded: false,
-        message: 'Draft saved to Drafts. Nothing has been sent.',
+        message:
+            'Draft saved to Drafts. Nothing has been sent.' +
+            (created.sendable ? '' : ` No identity authorises "${created.from}", so sending this draft would be refused.`),
         account: manager.getCurrentAccountName(),
     };
 }
@@ -204,6 +212,7 @@ export async function draftReply(params: z.infer<typeof draftReplySchema>): Prom
 
     return {
         emailId: created.emailId,
+        sendable: created.sendable,
         kind: 'reply',
         from: created.from,
         to,
@@ -211,7 +220,8 @@ export async function draftReply(params: z.infer<typeof draftReplySchema>): Prom
         threaded: Boolean(inReplyTo),
         message:
             'Draft reply saved to Drafts. Nothing has been sent.' +
-            (inReplyTo ? '' : ' The original has no Message-ID, so this reply will not thread.'),
+            (inReplyTo ? '' : ' The original has no Message-ID, so this reply will not thread.') +
+            (created.sendable ? '' : ` No identity authorises "${created.from}", so sending this draft would be refused.`),
         account: manager.getCurrentAccountName(),
     };
 }
@@ -237,13 +247,16 @@ export async function draftForward(
 
     return {
         emailId: created.emailId,
+        sendable: created.sendable,
         kind: 'forward',
         from: created.from,
         to,
         subject,
         // A forward is not a reply; it starts its own conversation.
         threaded: false,
-        message: 'Draft forward saved to Drafts. Nothing has been sent.',
+        message:
+            'Draft forward saved to Drafts. Nothing has been sent.' +
+            (created.sendable ? '' : ` No identity authorises "${created.from}", so sending this draft would be refused.`),
         account: manager.getCurrentAccountName(),
     };
 }

@@ -60,11 +60,11 @@ const client = {
     ]),
     createDraft: vi.fn(async (p: Record<string, unknown>) => {
         created = p;
-        return {
-            emailId: 'DRAFT1',
-            mailboxId: 'mbx-drafts',
-            from: (p.from as string) ?? 'anand@example.com',
-        };
+        const from = (p.from as string) ?? 'anand@example.com';
+        // Mirrors the client: a catch-all domain authorises anything on it.
+        const sendable =
+            from.endsWith('@example.com') || from.toLowerCase() === 'work@example.com';
+        return { emailId: 'DRAFT1', mailboxId: 'mbx-drafts', from, sendable };
     }),
     // Present so a stray call would be visible rather than silently absent.
     sendEmail: vi.fn(async () => {
@@ -258,5 +258,41 @@ describe('a reply comes from the address it was sent to', () => {
         await reply({ emailId: 'E1', body: 'x', from: 'work@example.com' });
 
         expect(created?.from).toBe('work@example.com');
+    });
+});
+
+describe('an unusual From is allowed, and its sendability reported', () => {
+    it('accepts an address no identity authorises', async () => {
+        // Fastmail stores any From on a draft -- verified against the live
+        // account -- so refusing here would be a limiter this client invented,
+        // and would block the per-correspondent addresses a catch-all exists for.
+        const r = await newDraft({
+            to: 'a@b.c',
+            subject: 'S',
+            body: 'B',
+            from: 'anand.storename@sunkcost.farm',
+        });
+
+        expect(r.emailId).toBe('DRAFT1');
+        expect(r.sendable).toBe(false);
+    });
+
+    it('says the draft could not be sent as-is, rather than failing silently', async () => {
+        const r = await newDraft({
+            to: 'a@b.c',
+            subject: 'S',
+            body: 'B',
+            from: 'anand.storename@sunkcost.farm',
+        });
+
+        expect(r.message).toMatch(/would be refused/i);
+        expect(r.message).toContain('anand.storename@sunkcost.farm');
+    });
+
+    it('stays quiet when the address is authorised', async () => {
+        const r = await newDraft({ to: 'a@b.c', subject: 'S', body: 'B' });
+
+        expect(r.sendable).toBe(true);
+        expect(r.message).not.toMatch(/refused/i);
     });
 });
