@@ -43,6 +43,8 @@ export const TOOL_GROUPS: ToolGroup[] = [
             'changes_since',
             'get_email',
             'draft_email',
+            'draft_reply',
+            'draft_forward',
             'send_email',
             'forward_email',
             'move_emails',

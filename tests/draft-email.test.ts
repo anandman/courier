@@ -10,7 +10,14 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { AccountManager, type ExtendedMultiAccountConfig } from '../src/account-manager.js';
 import { runWithRequestContext } from '../src/request-context.js';
-import { draftEmail, draftEmailSchema } from '../src/tools/draft.js';
+import {
+    draftEmail,
+    draftEmailSchema,
+    draftForward,
+    draftForwardSchema,
+    draftReply,
+    draftReplySchema,
+} from '../src/tools/draft.js';
 
 const config: ExtendedMultiAccountConfig = {
     accounts: [
@@ -47,9 +54,17 @@ let created: Record<string, unknown> | undefined;
 
 const client = {
     getEmailWithBody: vi.fn(async () => ORIGINAL),
+    getIdentities: vi.fn(async () => [
+        { id: 'i1', email: 'anand@example.com', name: 'Anand' },
+        { id: 'i2', email: 'work@example.com', name: 'Anand (work)' },
+    ]),
     createDraft: vi.fn(async (p: Record<string, unknown>) => {
         created = p;
-        return { emailId: 'DRAFT1', mailboxId: 'mbx-drafts' };
+        return {
+            emailId: 'DRAFT1',
+            mailboxId: 'mbx-drafts',
+            from: (p.from as string) ?? 'anand@example.com',
+        };
     }),
     // Present so a stray call would be visible rather than silently absent.
     sendEmail: vi.fn(async () => {
@@ -62,16 +77,21 @@ vi.mock('jmap-courier', async (importOriginal) => {
     return { ...actual, getClient: () => client };
 });
 
-function draft(params: Record<string, unknown>) {
+function run<T>(fn: () => Promise<T>): Promise<T> {
     const accountManager = new AccountManager({
         initialConfig: config,
         allowEnv: false,
         allowConfigFile: false,
     });
-    return runWithRequestContext({ accountManager }, () =>
-        draftEmail(draftEmailSchema.parse(params))
-    );
+    return runWithRequestContext({ accountManager }, fn);
 }
+
+const newDraft = (p: Record<string, unknown>) =>
+    run(() => draftEmail(draftEmailSchema.parse(p)));
+const reply = (p: Record<string, unknown>) =>
+    run(() => draftReply(draftReplySchema.parse(p)));
+const forward = (p: Record<string, unknown>) =>
+    run(() => draftForward(draftForwardSchema.parse(p)));
 
 beforeEach(() => {
     created = undefined;
@@ -80,7 +100,7 @@ afterEach(() => vi.clearAllMocks());
 
 describe('it drafts and never sends', () => {
     it('creates a draft for a new message', async () => {
-        const r = await draft({ to: 'neil@provider.example', subject: 'Hello', body: 'Hi' });
+        const r = await newDraft({ to: 'neil@provider.example', subject: 'Hello', body: 'Hi' });
 
         expect(r.emailId).toBe('DRAFT1');
         expect(client.createDraft).toHaveBeenCalled();
@@ -88,7 +108,7 @@ describe('it drafts and never sends', () => {
     });
 
     it('says plainly that nothing was sent', async () => {
-        const r = await draft({ to: 'a@b.c', subject: 'S', body: 'B' });
+        const r = await newDraft({ to: 'a@b.c', subject: 'S', body: 'B' });
 
         expect(r.message).toMatch(/nothing has been sent/i);
     });
@@ -97,7 +117,7 @@ describe('it drafts and never sends', () => {
 describe('reply mode', () => {
     it('threads: carries In-Reply-To and References from the original', async () => {
         // The reason the RFC 5322 headers were exposed in the first place.
-        const r = await draft({ mode: 'reply', emailId: 'E1', body: 'Thanks' });
+        const r = await reply({ emailId: 'E1', body: 'Thanks' });
 
         expect(created?.inReplyTo).toBe('orig@example.com');
         expect(created?.references).toEqual(['root@example.com', 'orig@example.com']);
@@ -105,7 +125,7 @@ describe('reply mode', () => {
     });
 
     it('addresses the original sender without being told', async () => {
-        const r = await draft({ mode: 'reply', emailId: 'E1', body: 'Thanks' });
+        const r = await reply({ emailId: 'E1', body: 'Thanks' });
 
         expect(r.to).toEqual(['neil@provider.example']);
     });
@@ -113,28 +133,28 @@ describe('reply mode', () => {
     it('prefixes the subject once, not twice', async () => {
         client.getEmailWithBody.mockResolvedValueOnce({ ...ORIGINAL, subject: 'Re: Already a reply' });
 
-        const r = await draft({ mode: 'reply', emailId: 'E1', body: 'x' });
+        const r = await reply({ emailId: 'E1', body: 'x' });
 
         expect(r.subject).toBe('Re: Already a reply');
     });
 
     it('adds Re: when there is none', async () => {
-        expect((await draft({ mode: 'reply', emailId: 'E1', body: 'x' })).subject).toBe(
+        expect((await reply({ emailId: 'E1', body: 'x' })).subject).toBe(
             'Re: OAuth client registration request'
         );
     });
 
     it('replyAll adds the other recipients but not me', async () => {
-        await draft({ mode: 'reply', emailId: 'E1', body: 'x', replyAll: true });
+        await reply({ emailId: 'E1', body: 'x', replyAll: true });
 
         expect(created?.cc).toEqual(['team@provider.example']);
     });
 
     it('quotes the original by default, and can be told not to', async () => {
-        await draft({ mode: 'reply', emailId: 'E1', body: 'Thanks' });
+        await reply({ emailId: 'E1', body: 'Thanks' });
         expect(String(created?.textBody)).toContain('> We will not accept dynamic registrations.');
 
-        await draft({ mode: 'reply', emailId: 'E1', body: 'Thanks', quote: false });
+        await reply({ emailId: 'E1', body: 'Thanks', quote: false });
         expect(String(created?.textBody)).toBe('Thanks');
     });
 
@@ -142,7 +162,7 @@ describe('reply mode', () => {
         // Genuinely happens: unsubmitted drafts and some gateway mail have none.
         client.getEmailWithBody.mockResolvedValueOnce({ ...ORIGINAL, messageId: null });
 
-        const r = await draft({ mode: 'reply', emailId: 'E1', body: 'x' });
+        const r = await reply({ emailId: 'E1', body: 'x' });
 
         expect(r.threaded).toBe(false);
         expect(r.message).toMatch(/will not thread/i);
@@ -154,7 +174,7 @@ describe('reply mode', () => {
             replyTo: [{ name: null, email: 'list@provider.example' }],
         });
 
-        expect((await draft({ mode: 'reply', emailId: 'E1', body: 'x' })).to).toEqual([
+        expect((await reply({ emailId: 'E1', body: 'x' })).to).toEqual([
             'list@provider.example',
         ]);
     });
@@ -162,7 +182,7 @@ describe('reply mode', () => {
 
 describe('forward mode', () => {
     it('prefixes Fwd: and does not pretend to be a reply', async () => {
-        const r = await draft({ mode: 'forward', emailId: 'E1', to: 'c@d.e', body: 'see below' });
+        const r = await forward({ emailId: 'E1', to: 'c@d.e', body: 'see below' });
 
         expect(r.subject).toBe('Fwd: OAuth client registration request');
         expect(created?.inReplyTo).toBeUndefined();
@@ -171,23 +191,72 @@ describe('forward mode', () => {
 });
 
 describe('it refuses rather than guessing', () => {
-    it('requires emailId for reply and forward', async () => {
-        await expect(draft({ mode: 'reply', body: 'x' })).rejects.toThrow(/requires emailId/);
+    it('cannot be asked for a reply without a message to reply to', () => {
+        // The point of splitting the tools: this is now a schema error, not a
+        // runtime one, so an invalid call cannot be constructed at all.
+        expect(() => draftReplySchema.parse({ body: 'x' })).toThrow();
     });
 
-    it('requires a recipient when there is none to infer', async () => {
-        await expect(draft({ subject: 'S', body: 'B' })).rejects.toThrow(/recipient/i);
+    it('cannot be asked for a new draft without a subject', () => {
+        expect(() => draftEmailSchema.parse({ to: 'a@b.c', body: 'B' })).toThrow();
     });
 
-    it('requires a subject for a new message', async () => {
-        await expect(draft({ to: 'a@b.c', body: 'B' })).rejects.toThrow(/subject/i);
+    it('requires a recipient when there is none to infer', () => {
+        expect(() => draftEmailSchema.parse({ subject: 'S', body: 'B' })).toThrow();
     });
 
     it('explains when a reply has no sender to infer', async () => {
         client.getEmailWithBody.mockResolvedValueOnce({ ...ORIGINAL, from: null, replyTo: null });
 
-        await expect(draft({ mode: 'reply', emailId: 'E1', body: 'x' })).rejects.toThrow(
+        await expect(reply({ emailId: 'E1', body: 'x' })).rejects.toThrow(
             /no sender to reply to/i
         );
+    });
+});
+
+describe('a reply comes from the address it was sent to', () => {
+    it('picks the identity the original was addressed to', async () => {
+        // Replying to a work message from a personal address is a visible
+        // mistake, and one the recipient notices rather than the author.
+        client.getEmailWithBody.mockResolvedValueOnce({
+            ...ORIGINAL,
+            to: [{ name: null, email: 'work@example.com' }],
+        });
+
+        const r = await reply({ emailId: 'E1', body: 'x' });
+
+        expect(created?.from).toBe('work@example.com');
+        expect(r.from).toBe('work@example.com');
+    });
+
+    it('finds the identity on Cc as well as To', async () => {
+        client.getEmailWithBody.mockResolvedValueOnce({
+            ...ORIGINAL,
+            to: [{ name: null, email: 'someone@elsewhere.example' }],
+            cc: [{ name: null, email: 'work@example.com' }],
+        });
+
+        await reply({ emailId: 'E1', body: 'x' });
+
+        expect(created?.from).toBe('work@example.com');
+    });
+
+    it('falls back to the default when none of my addresses were on it', async () => {
+        // Happens with forwards and mailing lists.
+        client.getEmailWithBody.mockResolvedValueOnce({
+            ...ORIGINAL,
+            to: [{ name: null, email: 'list@elsewhere.example' }],
+            cc: null,
+        });
+
+        await reply({ emailId: 'E1', body: 'x' });
+
+        expect(created?.from).toBeUndefined();
+    });
+
+    it('an explicit from wins over the inferred one', async () => {
+        await reply({ emailId: 'E1', body: 'x', from: 'work@example.com' });
+
+        expect(created?.from).toBe('work@example.com');
     });
 });

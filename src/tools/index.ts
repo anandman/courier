@@ -110,7 +110,14 @@ import {
     deleteEvent,
 } from './calendar.js';
 import { changesSince, changesSinceSchema } from './changes.js';
-import { draftEmail, draftEmailSchema } from './draft.js';
+import {
+    draftEmail,
+    draftEmailSchema,
+    draftForward,
+    draftForwardSchema,
+    draftReply,
+    draftReplySchema,
+} from './draft.js';
 
 // Tool definition type
 export interface ToolDefinition {
@@ -260,9 +267,23 @@ const baseTools: ToolDefinition[] = [
     {
         name: 'draft_email',
         description:
-            'Create a draft in the Drafts folder WITHOUT sending it — use this whenever a human should read or edit the message before it goes out. mode: new (default), reply, or forward; reply and forward take emailId and inherit the recipients, subject and threading headers from the original, so a reply stays in its conversation. Nothing is transmitted.',
+            'Draft a NEW email into the Drafts folder WITHOUT sending it. Use whenever a human should read or edit the message before it goes out. Nothing is transmitted. To reply or forward, use draft_reply or draft_forward instead \u2014 they inherit the recipients, subject and threading.',
         inputSchema: draftEmailSchema,
         handler: (params) => draftEmail(draftEmailSchema.parse(params)),
+    },
+    {
+        name: 'draft_reply',
+        description:
+            'Draft a reply to an existing message into Drafts WITHOUT sending it. Addresses the original sender, keeps the conversation threaded (In-Reply-To/References), prefixes Re: once, quotes the original, and sends as whichever of your addresses the original was addressed to. Nothing is transmitted.',
+        inputSchema: draftReplySchema,
+        handler: (params) => draftReply(draftReplySchema.parse(params)),
+    },
+    {
+        name: 'draft_forward',
+        description:
+            'Draft a forward of an existing message into Drafts WITHOUT sending it. Prefixes Fwd: once and includes the original below any note you add. Nothing is transmitted.',
+        inputSchema: draftForwardSchema,
+        handler: (params) => draftForward(draftForwardSchema.parse(params)),
     },
     {
         name: 'send_email',
@@ -436,6 +457,8 @@ export {
     listMailboxes,
     changesSince,
     draftEmail,
+    draftReply,
+    draftForward,
     createMailbox,
     renameMailbox,
     deleteMailbox,

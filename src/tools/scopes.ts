@@ -31,6 +31,8 @@ const MAIL_TOOLS = [
     // A draft is an Email/set into Drafts; it never submits, so it needs mail
     // rather than submission. A read-write-but-cannot-send token can draft.
     'draft_email',
+    'draft_reply',
+    'draft_forward',
     'list_mailboxes',
     'create_mailbox',
     'rename_mailbox',
