@@ -10,6 +10,7 @@ import {
 import { runWithRequestContext } from '../src/request-context.js';
 import {
     createAccountScopedTool,
+    switchAccount,
     tools,
     type ToolDefinition,
 } from '../src/tools/index.js';
@@ -127,5 +128,44 @@ describe('per-call account selection', () => {
             'Account "Missing" not found. Available: Personal, Work'
         );
         expect(handler).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('switch_account on an account that does not exist', () => {
+    /**
+     * It used to answer `success: false` with a message, which left the MCP
+     * envelope reporting a successful call. A client that reads the envelope --
+     * which is all an exit code or an isError check can see -- took that as a
+     * completed switch and carried on against whichever account was already
+     * current, silently operating on the wrong mailbox.
+     *
+     * Throwing matches createAccountScopedTool, which already refuses an
+     * unknown `account` parameter the same way on every other tool.
+     */
+    it('throws instead of reporting failure as data', async () => {
+        const manager = createManager();
+        await runWithRequestContext({ accountManager: manager }, async () => {
+            await expect(switchAccount({ account: 'nobody@example.com' })).rejects.toThrow(
+                /not found/
+            );
+        });
+    });
+
+    it('names the accounts that do exist', async () => {
+        const manager = createManager();
+        await runWithRequestContext({ accountManager: manager }, async () => {
+            await expect(switchAccount({ account: 'nobody@example.com' })).rejects.toThrow(
+                /Personal/
+            );
+        });
+    });
+
+    it('still switches to an account that does exist', async () => {
+        const manager = createManager();
+        await runWithRequestContext({ accountManager: manager }, async () => {
+            const result = await switchAccount({ account: 'Work' });
+            expect(result.success).toBe(true);
+            expect(result.currentAccount).toBe('work@example.com');
+        });
     });
 });

@@ -38,8 +38,20 @@ export async function listAccounts(): Promise<{
     };
 }
 
+/**
+ * Selects an account for this client context.
+ *
+ * Throws when the account does not exist, rather than returning
+ * `success: false`. The old shape was a failure reported as data: the MCP
+ * envelope said the call succeeded, so a caller that checks the envelope --
+ * which is the only thing an exit code can be derived from -- saw a switch to a
+ * nonexistent account as a success and carried on against whichever account
+ * happened to be current. Every other tool already throws for exactly this
+ * condition, because createAccountScopedTool does so for its `account`
+ * parameter; this one was the exception.
+ */
 export async function switchAccount(params: z.infer<typeof switchAccountSchema>): Promise<{
-    success: boolean;
+    success: true;
     previousAccount: string | null;
     currentAccount: string | null;
     currentDisplayName?: string;
@@ -48,27 +60,22 @@ export async function switchAccount(params: z.infer<typeof switchAccountSchema>)
     const manager = getAccountManager();
     const previousAccount = manager.getCurrentAccountName();
 
-    const success = manager.switchAccount(params.account);
-
-    if (success) {
-        const current = manager.getCurrentAccount();
-        const displayLabel = current?.displayName || current?.name;
-        return {
-            success: true,
-            previousAccount,
-            currentAccount: current?.name || null,
-            currentDisplayName: current?.displayName,
-            message: `Switched to "${displayLabel}"`,
-        };
-    } else {
+    if (!manager.switchAccount(params.account)) {
         const available = manager.getAccounts().map(a => a.displayName || a.name);
-        return {
-            success: false,
-            previousAccount,
-            currentAccount: previousAccount,
-            message: `Account "${params.account}" not found. Available: ${available.join(', ') || 'none configured'}`,
-        };
+        throw new Error(
+            `Account "${params.account}" not found. Available: ${available.join(', ') || 'none configured'}`
+        );
     }
+
+    const current = manager.getCurrentAccount();
+    const displayLabel = current?.displayName || current?.name;
+    return {
+        success: true,
+        previousAccount,
+        currentAccount: current?.name || null,
+        currentDisplayName: current?.displayName,
+        message: `Switched to "${displayLabel}"`,
+    };
 }
 
 export async function getCurrentAccount(): Promise<{
