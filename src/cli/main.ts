@@ -467,7 +467,13 @@ async function handleCall(rawName: string, argv: string[], options: GlobalOption
         validateArguments(argv, describeParameters(localSchema), toolName, options);
     }
 
-    const session = new CourierSession({ serverUrl, store, timeoutMs: options.timeoutMs });
+    const session = new CourierSession({
+        serverUrl,
+        store,
+        timeoutMs: options.timeoutMs,
+        assumeYes: options.yes,
+        log: (line) => note(options, line),
+    });
 
     try {
         // A name this build does not know, on a command that then fails for
@@ -606,12 +612,12 @@ async function confirmOrRefuse(
     if (!process.stdin.isTTY) {
         throw new CliError(
             EXIT.FORBIDDEN,
-            `${toolName} needs confirmation because ${reason}, and this invocation has no terminal to ask at.`,
+            `${toolName} needs confirmation because it ${reason}, and this invocation has no terminal to ask at.`,
             'Pass --yes to confirm it in advance.'
         );
     }
 
-    process.stderr.write(`${toolName}: ${reason}.\n`);
+    process.stderr.write(`${toolName}: it ${reason}.\n`);
     // Argument keys, never values: a draft body or a recipient list does not
     // belong in a terminal log, and the same rule governs the server's tool log.
     process.stderr.write(`Arguments: ${Object.keys(args).sort().join(', ') || 'none'}\n`);

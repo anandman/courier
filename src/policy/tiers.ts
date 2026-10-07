@@ -55,26 +55,101 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Tools that put a message in front of another person.
+ * Tools whose effect cannot be taken back.
  *
- * `deny` by default, which is the one place the default is stricter than
- * "ask". Anand's instruction was explicit: an agent should not be able to send
- * mail on his behalf yet. Confirmation is not enough here, because a
- * confirmation prompt is something a person clicks through at the end of a long
- * agent turn, and the action is not reversible afterwards. Promoting a client
- * to `allow` or `confirm` for these is a deliberate per-client decision.
+ * `deny` by default. This is where the line falls now that `confirm` cannot
+ * actually reach anyone over the stateless HTTP transport -- with no third
+ * option, every tool has to be either allowed or refused, so the question
+ * becomes which mistakes a person can undo.
+ *
+ * Sending is the obvious case: there is no unsend. The rest are deletions that
+ * really delete. Note what is NOT here -- `delete_emails` moves messages to
+ * Trash rather than destroying them, so an agent that deletes the wrong thing
+ * has made a mess, not a loss, and a default of `deny` would cost more than it
+ * protects.
+ *
+ * Granting any of these is a deliberate per-client decision in settings.
  */
-export const OUTWARD_FACING_TOOLS: ReadonlySet<string> = new Set([
+export const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set([
+    // Outward-facing: another person receives something.
     'send_email',
     'forward_email',
+    // Destructive: nothing to recover from afterwards.
+    'delete_mailbox',
+    'delete_contact',
+    'delete_event',
+    'delete_task',
 ]);
 
-/** The tier a tool gets when a client has expressed no preference. */
+/**
+ * @deprecated Kept as a name for the outward-facing subset, which is worth
+ * being able to talk about separately from destruction.
+ */
+export const OUTWARD_FACING_TOOLS: ReadonlySet<string> = new Set(['send_email', 'forward_email']);
+
+/**
+ * The tier a tool gets when a client has expressed no preference.
+ *
+ * Two outcomes, not three, and deliberately so. `confirm` remains a tier a
+ * person can choose per client, but nothing defaults to it: over the stateless
+ * HTTP transport a confirmation can never be delivered -- a fresh Server is
+ * built per request, so the client's capabilities belong to another instance
+ * and its reply would arrive at a third -- and a default that always refuses
+ * would be a `deny` wearing a friendlier name.
+ *
+ * So the dividing line is reversibility. A reversible mistake is allowed,
+ * because the cost of an agent getting it wrong is a mess someone can clean up.
+ * An irreversible one is refused until deliberately granted.
+ *
+ * Anything unrecognised is `deny`. The list enumerates what is safe, so a tool
+ * added tomorrow is refused until someone classifies it -- noisy, visible, and
+ * fixed with one setting. The inverse fails by letting a new destructive tool
+ * straight through.
+ */
 export function defaultTierFor(toolName: string): Tier {
-    if (OUTWARD_FACING_TOOLS.has(toolName)) return 'deny';
+    if (IRREVERSIBLE_TOOLS.has(toolName)) return 'deny';
     if (READ_ONLY_TOOLS.has(toolName)) return 'allow';
-    return 'confirm';
+    if (REVERSIBLE_WRITE_TOOLS.has(toolName)) return 'allow';
+    return 'deny';
 }
+
+/**
+ * Tools that change something a person can put back.
+ *
+ * Drafts live in Drafts, deleted mail lives in Trash, a flag can be unset, a
+ * moved message can be moved again. Allowed by default because the realistic
+ * failure is an agent making a mess rather than destroying anything.
+ *
+ * `create_event` and `update_event` sit here with a caveat worth stating: they
+ * record attendees without emailing them unless `notify` is true, so the tool
+ * itself holds the outward-facing part behind a deliberate argument. A client
+ * allowed to create events can still pass `notify: true`. If that matters for a
+ * given client, set those two to deny for it.
+ */
+export const REVERSIBLE_WRITE_TOOLS: ReadonlySet<string> = new Set([
+    // Mail that stays in the mailbox
+    'draft_email',
+    'draft_reply',
+    'draft_forward',
+    'delete_emails',
+    'move_emails',
+    'mark_emails',
+    'tag_emails',
+    // Folder structure
+    'create_mailbox',
+    'rename_mailbox',
+    'move_mailbox',
+    'set_mailbox_role',
+    // Contacts
+    'create_contact',
+    'update_contact',
+    // Calendar and tasks
+    'create_event',
+    'update_event',
+    'create_task',
+    'update_task',
+    'complete_task',
+]);
 
 /**
  * The tier in force for one tool and one client.
@@ -99,6 +174,14 @@ export function tierFor(toolName: string, overrides?: Readonly<Record<string, Ti
 export function consequenceOf(toolName: string): string {
     if (OUTWARD_FACING_TOOLS.has(toolName)) {
         return 'sends a message to other people, which cannot be undone';
+    }
+    if (toolName === 'delete_emails') {
+        // Said precisely, because the honest answer is reassuring and the vague
+        // one is not. This moves mail to Trash; it does not destroy it.
+        return 'moves messages to Trash, where they can be recovered';
+    }
+    if (IRREVERSIBLE_TOOLS.has(toolName)) {
+        return 'deletes something permanently';
     }
     if (toolName.startsWith('delete_')) {
         return 'deletes data';

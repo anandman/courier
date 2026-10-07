@@ -1,10 +1,18 @@
 /**
- * Feature groups for tool visibility.
+ * Feature groups, for arranging tools in the settings UI.
  *
- * Which tools a user wants is a per-user question, not a per-deployment one:
- * one person may never touch tasks while another relies on them, and
- * both are served by the same Courier. So this is a stored preference, exposed
- * in the setup UI, rather than server configuration.
+ * This used to be an enforcement mechanism: a per-user preference that hid
+ * whole areas from every client at once. That was removed because the
+ * granularity was wrong in both directions. Stopping one client from sending
+ * mail meant turning off Email, which also took away search and reading; and
+ * the setting applied to every client, so there was no way to let one tool
+ * through for a CLI while withholding it from a chat assistant.
+ *
+ * Permissions are per client now, per tool, and live in the OAuth client
+ * registry. What survives here is the grouping itself, which is still the only
+ * way to present forty-odd tools to a person without a wall of checkboxes --
+ * and it gives the UI something to offer bulk actions over. Nothing in this
+ * file decides whether a tool may run.
  */
 
 export const TOOL_GROUP_IDS = ['email', 'contacts', 'calendar', 'tasks'] as const;
@@ -22,7 +30,7 @@ export interface ToolGroup {
 /**
  * Account tools are infrastructure rather than a feature area: they are how a
  * client discovers and targets accounts, which is the reason Courier exists.
- * They are never hidden and belong to no group.
+ * They belong to no group and are listed on their own.
  */
 export const ALWAYS_AVAILABLE_TOOLS = ['list_accounts', 'switch_account', 'get_current_account'];
 
@@ -77,7 +85,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     {
         id: 'tasks',
         label: 'Tasks',
-        description: 'Task lists from your calendar server. Turn this off if you keep tasks somewhere else.',
+        description: 'Task lists from your calendar server.',
         tools: ['list_tasks', 'get_task', 'create_task', 'update_task', 'complete_task', 'delete_task'],
     },
 ];
@@ -86,28 +94,7 @@ const GROUP_BY_TOOL = new Map<string, ToolGroupId>(
     TOOL_GROUPS.flatMap((group) => group.tools.map((tool) => [tool, group.id] as const))
 );
 
-/** The group a tool belongs to, or null if it is always available. */
+/** The group a tool belongs to, or null when it belongs to none. */
 export function groupForTool(toolName: string): ToolGroupId | null {
     return GROUP_BY_TOOL.get(toolName) ?? null;
-}
-
-/**
- * Normalises stored preferences. Unknown ids are dropped rather than rejected:
- * a group removed in a later version must not make a saved config unloadable.
- */
-export function parseDisabledGroups(value: unknown): ToolGroupId[] {
-    if (!Array.isArray(value)) return [];
-    const known = new Set<string>(TOOL_GROUP_IDS);
-    return [...new Set(value.filter((id): id is ToolGroupId => typeof id === 'string' && known.has(id)))];
-}
-
-/**
- * Absence means everything is on. Storing the *disabled* set rather than the
- * enabled one is what makes that true without a migration, and means a group
- * added in a later version is on by default rather than silently missing.
- */
-export function isToolVisible(toolName: string, disabledGroups: readonly ToolGroupId[]): boolean {
-    const group = groupForTool(toolName);
-    if (group === null) return true;
-    return !disabledGroups.includes(group);
 }

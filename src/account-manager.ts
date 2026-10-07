@@ -12,7 +12,6 @@ import { join } from 'node:path';
 import type { AccountConfig, MultiAccountConfig } from 'jmap-courier';
 import type { CalDAVConfig } from './caldav/types.js';
 import { getRequestContext } from './request-context.js';
-import { parseDisabledGroups, type ToolGroupId } from './tools/groups.js';
 
 const DEFAULT_SESSION_URL = 'https://api.fastmail.com/jmap/session';
 const DEFAULT_CALDAV_URL = 'https://caldav.fastmail.com';
@@ -46,13 +45,11 @@ export interface ExtendedMultiAccountConfig {
      * so existing stored configs need no migration and groups added later
      * default to visible.
      */
-    disabledToolGroups?: ToolGroupId[];
     /**
      * When the tool selection last changed, so a client holding a cached tool
      * list can be told to refetch. Absent means it has never been changed,
      * which is precisely when there is nothing to notify anyone about.
      */
-    toolSettingsUpdatedAt?: number;
 }
 
 export interface AccountManagerOptions {
@@ -72,8 +69,6 @@ export class AccountManager {
     private defaultAccountName: string | null = null;
     /** CalDAV password from environment variable (shared across accounts) */
     private envCalDAVPassword: string | null = null;
-    private disabledToolGroups: ToolGroupId[] = [];
-    private toolSettingsUpdatedAt: number | undefined;
     private onChange?: (config: ExtendedMultiAccountConfig) => void;
 
     constructor(options: AccountManagerOptions = {}) {
@@ -190,34 +185,6 @@ export class AccountManager {
             this.defaultAccountName = config.accounts[0].name;
         }
 
-        this.disabledToolGroups = parseDisabledGroups(config.disabledToolGroups);
-        this.toolSettingsUpdatedAt =
-            typeof config.toolSettingsUpdatedAt === 'number' ? config.toolSettingsUpdatedAt : undefined;
-    }
-
-    /** Feature groups this user has turned off; empty means every tool is visible. */
-    getDisabledToolGroups(): ToolGroupId[] {
-        return [...this.disabledToolGroups];
-    }
-
-    /** When the selection last changed, or undefined if it never has. */
-    getToolSettingsUpdatedAt(): number | undefined {
-        return this.toolSettingsUpdatedAt;
-    }
-
-    setDisabledToolGroups(groups: readonly ToolGroupId[]): void {
-        const next = parseDisabledGroups([...groups]);
-        // Only stamp on an actual change. Saving the form unchanged must not
-        // make every connected client refetch its tool list for nothing.
-        const changed =
-            next.length !== this.disabledToolGroups.length ||
-            next.some((id) => !this.disabledToolGroups.includes(id));
-
-        this.disabledToolGroups = next;
-        if (changed) {
-            this.toolSettingsUpdatedAt = Date.now();
-        }
-        this.persist();
     }
 
     private persist(): void {
@@ -325,12 +292,6 @@ export class AccountManager {
             defaultAccount: this.defaultAccountName ?? '',
             // Omitted when empty so an untouched config stays byte-identical to
             // what earlier versions wrote.
-            ...(this.disabledToolGroups.length > 0
-                ? { disabledToolGroups: [...this.disabledToolGroups] }
-                : {}),
-            ...(this.toolSettingsUpdatedAt !== undefined
-                ? { toolSettingsUpdatedAt: this.toolSettingsUpdatedAt }
-                : {}),
         };
     }
 

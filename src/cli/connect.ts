@@ -8,10 +8,12 @@
  * consumer's `case $?` quietly stops covering reality.
  */
 
+import { createInterface } from 'node:readline';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
-import { McpError } from '@modelcontextprotocol/sdk/types.js';
+import { ElicitRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { CliError, EXIT } from './exit.js';
 import { CliOAuthProvider } from './oauth.js';
@@ -21,6 +23,10 @@ export interface SessionOptions {
     serverUrl: string;
     store: CredentialStore;
     timeoutMs?: number;
+    /** `--yes`: confirm in advance anything the server asks about. */
+    assumeYes?: boolean;
+    /** Progress and prompts, on stderr. */
+    log?: (line: string) => void;
 }
 
 export interface RemoteTool {
@@ -82,7 +88,25 @@ export class CourierSession {
             );
         }
 
-        const client = new Client({ name: 'courier-cli', version: '1.0.0' });
+        // Declares elicitation, and means it.
+        //
+        // The server's `confirm` tier asks a human before a tool that changes
+        // something, and refuses when nobody can be asked -- correctly, since
+        // treating "could not ask" as consent would turn every confirm into an
+        // allow for exactly the unattended clients it exists to constrain. A
+        // client that did not declare this would simply be refused those tools.
+        //
+        // So the CLI answers properly: `--yes` is the human having already
+        // agreed, a terminal means asking them now, and neither means declining.
+        const client = new Client(
+            { name: 'courier-cli', version: '1.0.0' },
+            { capabilities: { elicitation: {} } }
+        );
+
+        client.setRequestHandler(ElicitRequestSchema, async (request) => {
+            const message = request.params.message;
+            return this.answerElicitation(message);
+        });
         const transport = new StreamableHTTPClientTransport(new URL(this.options.serverUrl), {
             authProvider: this.provider,
         });
@@ -147,6 +171,36 @@ export class CourierSession {
 
     private get timeout(): number {
         return this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    }
+
+    /**
+     * Answers the server's confirmation prompt.
+     *
+     * Declines rather than cancels when there is nobody to ask: `decline` is a
+     * decision and `cancel` is a dismissal, and "this invocation has no human"
+     * is the former. Either way the server refuses, but the message the user
+     * eventually reads should say which happened.
+     */
+    private async answerElicitation(message: string): Promise<{ action: 'accept' | 'decline'; content?: Record<string, never> }> {
+        const log = this.options.log ?? (() => undefined);
+
+        if (this.options.assumeYes) {
+            log(`${message} -- confirmed in advance by --yes.`);
+            return { action: 'accept', content: {} };
+        }
+
+        if (!process.stdin.isTTY) {
+            return { action: 'decline' };
+        }
+
+        process.stderr.write(`\n${message}\n`);
+        const rl = createInterface({ input: process.stdin, output: process.stderr });
+        try {
+            const answer = await new Promise<string>((resolve) => rl.question('Allow? [y/N] ', resolve));
+            return /^y(es)?$/i.test(answer.trim()) ? { action: 'accept', content: {} } : { action: 'decline' };
+        } finally {
+            rl.close();
+        }
     }
 
     /**

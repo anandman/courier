@@ -32,9 +32,10 @@ import { loadOidcProviderConfig, loadOidcUiConfig, parseAllowedUsers, verifyIdTo
 import { createProxyAuthMiddleware } from './auth/proxy.js';
 import { assertUsableSessionSecret, signSession, verifySession } from './auth/session.js';
 import { AccountManager } from './account-manager.js';
-import { TOOL_GROUP_IDS } from './tools/groups.js';
 import { handleStatelessMcpRequest } from './http-transport.js';
 import { createMcpServer } from './mcp-server.js';
+import { setPolicyProvider } from './policy/registry.js';
+import { isTier } from './policy/tiers.js';
 import { createVaultStore } from './vault/index.js';
 import { describeAddresses } from './net-names.js';
 import { runWithPeerAddress, runWithRequestContext } from './request-context.js';
@@ -282,6 +283,9 @@ async function startHttpServer() {
             process.env.MCP_OIDC_MCP_REDIRECT_URI ?? new URL('/auth/mcp/callback', publicUrl).href;
 
         clientStore = new CourierClientStore({ filePath: resolveClientsFilePath() });
+        // Tool enforcement reads permissions from here. Registered once, and
+        // only in HTTP mode: stdio has no OAuth client to attach them to.
+        setPolicyProvider(clientStore);
 
         const provider = new CourierOAuthProvider({
             clientsStore: clientStore,
@@ -621,7 +625,6 @@ async function startHttpServer() {
                 accounts,
                 defaultAccount,
                 selectedAccount,
-                manager.getDisabledToolGroups(),
                 named(clients),
                 named(unattributed)
             )
@@ -657,38 +660,72 @@ async function startHttpServer() {
         res.redirect('/ui');
     });
 
-    app.post('/ui/tools', async (req, res) => {
+    /**
+     * Sets one tool's tier for one client.
+     *
+     * One tool at a time rather than a whole form, because the alternative --
+     * posting the full table -- would silently overwrite a change made in
+     * another tab or on another device with whatever this page happened to be
+     * showing. Permissions are exactly the setting where a lost write matters.
+     */
+    app.post('/ui/clients/policy', async (req, res) => {
         const uiUser = resolveUiUser(req, authMode, oidcProviderConfig?.allowedUsers);
         if (!uiUser) {
             res.status(401).send('Unauthorized');
             return;
         }
 
-        if (!vault) {
-            res.status(500).send('Vault storage is not configured');
+        if (!clientStore) {
+            res.status(500).send('Client registry is not configured');
             return;
         }
 
-        // Unchecked boxes are simply absent from a form post, so the enabled set
-        // is what arrives and the disabled set is everything else. A single
-        // checkbox posts a string rather than an array.
-        const submitted = req.body.group;
-        const enabled = new Set(
-            (Array.isArray(submitted) ? submitted : submitted ? [submitted] : []).map(String)
+        const clientId = String(req.body.clientId ?? '').trim();
+        const toolName = String(req.body.tool ?? '').trim();
+        const submitted = String(req.body.tier ?? '').trim();
+        if (!clientId || !toolName) {
+            res.status(400).send('clientId and tool are required');
+            return;
+        }
+
+        // Ownership is checked here, not inside the store: the store knows
+        // about clients, not about who is signed in. Without this, anyone
+        // allowlisted could change permissions on another user's client by
+        // posting its id.
+        const owned = await clientStore.listClientsForOwner(uiUser.userId);
+        const unattributed = await clientStore.listUnattributedClients();
+        const mayEdit =
+            owned.some((client) => client.clientId === clientId) ||
+            unattributed.some((client) => client.clientId === clientId);
+        if (!mayEdit) {
+            console.warn(
+                `[policy] ${uiUser.userId} tried to change ${toolName} on client ${clientId}, which is not theirs`
+            );
+            // Indistinguishable from "no such client", deliberately: saying
+            // which would confirm the existence of someone else's client.
+            res.status(404).send('No such client');
+            return;
+        }
+
+        // An empty tier means "back to the default", which is distinct from
+        // any of the three and is how a row gets un-set.
+        const tier = submitted === '' ? null : submitted;
+        if (tier !== null && !isTier(tier)) {
+            res.status(400).send('tier must be allow, confirm or deny');
+            return;
+        }
+
+        const changed = await clientStore.setToolTier(clientId, toolName, tier);
+        if (!changed) {
+            res.status(400).send('That client cannot hold permissions yet');
+            return;
+        }
+
+        console.warn(
+            `[policy] ${uiUser.userId} set ${toolName} to ${tier ?? 'default'} for client ${clientId}`
         );
-        const disabled = TOOL_GROUP_IDS.filter((id) => !enabled.has(id));
 
-        await vault.updateUserConfig(uiUser.userId, (latestConfig) => {
-            const latestManager = new AccountManager({
-                initialConfig: latestConfig ?? { accounts: [], defaultAccount: '' },
-                allowEnv: false,
-                allowConfigFile: false,
-            });
-            latestManager.setDisabledToolGroups(disabled);
-            return latestManager.exportConfig();
-        });
-
-        res.redirect('/ui');
+        res.redirect(`/ui#client-${encodeURIComponent(clientId)}`);
     });
 
     app.post('/ui/account', async (req, res) => {

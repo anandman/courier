@@ -1,6 +1,33 @@
 # Tools Reference
 
-Complete reference for all 34 MCP tools provided by Courier.
+Complete reference for all MCP tools provided by Courier.
+
+## Permissions
+
+Every tool is offered to every client. What a client may actually *do* with one
+is a per-client setting, enforced when the tool is called:
+
+| Tier | Effect |
+|------|--------|
+| Allow | Runs. |
+| Ask first | Asks a person through MCP elicitation, and refuses if nobody can be asked. Requires a client that supports elicitation over a session; it is not reachable on the stateless HTTP transport today. |
+| Block | Refused, with an explanation naming the setting that would change it. |
+
+Defaults divide on **reversibility**. Reads and changes a person can undo run
+freely; anything that cannot be taken back is blocked until you grant it to a
+specific client in Courier's settings:
+
+- **Blocked by default:** `send_email`, `forward_email` (no unsend),
+  `delete_mailbox`, `delete_contact`, `delete_event`, `delete_task`.
+- **Allowed by default:** everything else, including `delete_emails` — which
+  moves mail to Trash rather than destroying it.
+
+A tool Courier does not recognise is blocked until classified.
+
+Note that `create_event` and `update_event` are allowed and accept
+`notify: true`, which emails attendees. The tool holds that behind a deliberate
+argument and defaults it off, but a client permitted to create events can still
+pass it. Block those two for any client where that matters.
 
 ## Token-Smart Usage
 

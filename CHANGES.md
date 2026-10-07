@@ -67,6 +67,46 @@ callback.
 
 See [docs/cli.md](docs/cli.md).
 
+## New: permissions are per client, per tool
+
+Courier now decides what each connected client may do, tool by tool, enforced
+at `tools/call`. Allow, ask first, or block — set in the settings UI against
+each authorized client, stored in the OAuth client registry and keyed on
+`client_id`.
+
+**Every tool stays advertised to every client.** Permission is not expressed by
+hiding things: clients cache the tool list, and several only notice a change
+when the server is removed and re-added by hand, so a permission change must
+not alter what is offered.
+
+Defaults divide on **reversibility**, because a confirmation cannot actually be
+delivered over the stateless HTTP transport — a fresh `Server` is built per
+request, so the capabilities declared at `initialize` belong to another instance
+and the client's reply to a server-initiated request would arrive at a third.
+With no workable middle tier, the question becomes which mistakes a person can
+undo. Reads and reversible changes run; `send_email`, `forward_email` and the
+deletions that really delete are blocked until granted. `delete_emails` is
+allowed, because it moves mail to Trash.
+
+"Ask first" remains selectable per client and is fully implemented, including
+the rule that a client which cannot ask anyone is refused rather than allowed —
+treating "nobody could be asked" as consent would turn it into a blanket allow
+for exactly the unattended clients it exists to constrain. It becomes reachable
+if the transport ever gains a session.
+
+## Removed: server-wide tool group toggles
+
+The old Advanced section turned whole feature areas off for every client at
+once. The granularity was wrong in both directions: stopping one client from
+sending mail meant losing search and reading with it, and there was no way to
+let a CLI draft while withholding the same tool from a chat assistant. Per-client
+permissions replace it entirely. The grouping survives only as a way to arrange
+forty-odd tools on the settings page.
+
+Stored `disabledToolGroups` values are ignored. If you had turned a group off,
+those tools are available again — and restricting them is now a per-client
+decision.
+
 ## Fixed: a bad command line reported as an authentication failure
 
 Authentication was checked before the command line was parsed, so with no

@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto';
 
-import { ALWAYS_AVAILABLE_TOOLS, TOOL_GROUPS, type ToolGroupId } from './tools/groups.js';
+import { ALWAYS_AVAILABLE_TOOLS, TOOL_GROUPS } from './tools/groups.js';
+import {
+    READ_ONLY_TOOLS as ALL_READ_TOOLS,
+    TIERS,
+    type Tier,
+    consequenceOf,
+    defaultTierFor,
+    tierFor,
+} from './policy/tiers.js';
 
 type AuthMode = 'oidc' | 'proxy' | 'none';
 
@@ -36,6 +44,63 @@ const styles = `
   }
 
   * { box-sizing: border-box; }
+
+  /* Per-client permissions. */
+  .client-policy {
+    margin: 0 0 0.75rem;
+    padding: 0 1rem 0.75rem;
+    border: 1px solid var(--line);
+    border-top: 0;
+    border-radius: 0 0 12px 12px;
+    background: var(--canvas);
+  }
+
+  .client-policy > summary {
+    padding: 0.7rem 0;
+    cursor: pointer;
+    color: var(--brand);
+    font-size: 0.85rem;
+    font-weight: 650;
+  }
+
+  .policy-section { margin: 1rem 0 0; }
+  .policy-section h3 { margin: 0; font-size: 0.85rem; }
+
+  .tool-policy {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tool-policy:last-child { border-bottom: 0; }
+
+  .tool-policy-copy { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+  .tool-policy-copy code { font-size: 0.82rem; font-weight: 650; }
+  .tool-policy-copy span { color: var(--muted); font-size: 0.78rem; }
+
+  .tool-policy-controls { display: flex; gap: 0.5rem; align-items: center; }
+  .tool-policy-controls select {
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    font: inherit;
+    font-size: 0.8rem;
+  }
+  .tool-policy-controls .button { min-height: 32px; padding: 0 0.7rem; }
+
+  /*
+   * The effective tier, stated next to every control. Without it a row reading
+   * "Default" says nothing about what actually happens -- which is the only
+   * thing the person is there to find out.
+   */
+  .badge.tier-allow { background: var(--success-soft); color: var(--success); }
+  .badge.tier-confirm { background: #fff8e8; color: #7a4d00; }
+  .badge.tier-deny { background: #fdeaea; color: #a52020; }
 
   /*
    * The code page stacks elements that carry no margin of their own -- a
@@ -981,6 +1046,111 @@ export interface UiClient {
     promotedAt?: number;
     lastSeenAt?: number;
     lastSeenFrom?: string;
+    /** Only the tools whose tier was deliberately set for this client. */
+    policy?: Record<string, Tier>;
+}
+
+/**
+ * Every tool, grouped for display, with the ungrouped account tools last.
+ *
+ * Built from the same group definitions the tool registry uses, so a tool added
+ * to a group appears here without anyone remembering to update a second list.
+ */
+const POLICY_SECTIONS: { label: string; description: string; tools: string[] }[] = [
+    ...TOOL_GROUPS.map((group) => ({
+        label: group.label,
+        description: group.description,
+        tools: group.tools,
+    })),
+    {
+        label: 'Accounts',
+        description: 'How a client discovers and targets your accounts.',
+        tools: [...ALWAYS_AVAILABLE_TOOLS],
+    },
+];
+
+const ALL_TOOL_NAMES: string[] = POLICY_SECTIONS.flatMap((section) => section.tools);
+
+const TIER_LABELS: Record<Tier, string> = {
+    allow: 'Allow',
+    confirm: 'Ask first',
+    deny: 'Block',
+};
+
+/**
+ * One tool's permission control.
+ *
+ * A form per tool, posting a single change. The alternative -- one big form --
+ * would overwrite a change made in another tab with whatever this page happened
+ * to be showing, and permissions are exactly where a lost write matters.
+ *
+ * Submits on change rather than behind a save button, which needs no script:
+ * each radio is its own submit via a labelled button would be heavier, so the
+ * explicit button stays but is small. The default option is offered as a fourth
+ * choice so a deliberate setting can be undone back to "whatever Courier
+ * decides", which is not the same as pinning it to today's default value.
+ */
+function renderToolPolicy(clientId: string, toolName: string, overrides: Record<string, Tier>): string {
+    const current = overrides[toolName];
+    const effective = tierFor(toolName, overrides);
+    const fallback = defaultTierFor(toolName);
+    const options = [
+        ...TIERS.map((tier) => ({
+            value: tier as string,
+            label: TIER_LABELS[tier],
+            selected: current === tier,
+        })),
+        {
+            value: '',
+            label: `Default (${TIER_LABELS[fallback]})`,
+            selected: current === undefined,
+        },
+    ];
+
+    return `<form class="tool-policy" method="post" action="/ui/clients/policy">
+        <input type="hidden" name="clientId" value="${escapeHtml(clientId)}" />
+        <input type="hidden" name="tool" value="${escapeHtml(toolName)}" />
+        <div class="tool-policy-copy">
+          <code>${escapeHtml(toolName)}</code>
+          <span>It ${escapeHtml(consequenceOfForDisplay(toolName))}.</span>
+        </div>
+        <div class="tool-policy-controls">
+          <select name="tier" aria-label="Permission for ${escapeHtml(toolName)}">
+            ${options
+                .map(
+                    (option) =>
+                        `<option value="${escapeHtml(option.value)}"${option.selected ? ' selected' : ''}>${escapeHtml(option.label)}</option>`
+                )
+                .join('')}
+          </select>
+          <button class="button secondary" type="submit">Set</button>
+          <span class="badge tier-${effective}">${escapeHtml(TIER_LABELS[effective])}</span>
+        </div>
+      </form>`;
+}
+
+/**
+ * What a tool does, phrased for someone deciding whether to permit it.
+ *
+ * Reads get a plain description rather than the change-oriented wording the
+ * confirmation prompt uses, which would read oddly next to a tool that only
+ * looks at things.
+ */
+function consequenceOfForDisplay(toolName: string): string {
+    return defaultTierFor(toolName) === 'allow' && !toolName.startsWith('draft_') &&
+        ALL_READ_TOOLS.has(toolName)
+        ? 'only reads'
+        : consequenceOf(toolName);
+}
+
+function renderPolicyGroups(client: UiClient, overrides: Record<string, Tier>): string {
+    return POLICY_SECTIONS.map(
+        (section) => `<section class="policy-section">
+          <h3>${escapeHtml(section.label)}</h3>
+          <p class="card-intro">${escapeHtml(section.description)}</p>
+          ${section.tools.map((tool) => renderToolPolicy(client.clientId, tool, overrides)).join('')}
+        </section>`
+    ).join('');
 }
 
 /** "3 minutes ago" style relative time; absolute dates are noise at this scale. */
@@ -1014,7 +1184,6 @@ export function renderUiPage(
     accounts: UiAccount[],
     defaultAccount: string | null,
     selectedAccountName: string | null = null,
-    disabledToolGroups: readonly ToolGroupId[] = [],
     clients: UiClient[] = [],
     unattributedClients: UiClient[] = []
 ): string {
@@ -1052,28 +1221,23 @@ export function renderUiPage(
           <p>Add an account to make mail, contacts, calendars, and tasks available to your MCP clients.</p>
         </div>`;
 
-    const enabledGroups = TOOL_GROUPS.filter((group) => !disabledToolGroups.includes(group.id));
-    const visibleToolCount =
-        ALWAYS_AVAILABLE_TOOLS.length +
-        enabledGroups.reduce((total, group) => total + group.tools.length, 0);
-    const totalToolCount =
-        ALWAYS_AVAILABLE_TOOLS.length +
-        TOOL_GROUPS.reduce((total, group) => total + group.tools.length, 0);
-
-    const toolGroupRows = TOOL_GROUPS.map((group) => {
-        const enabled = !disabledToolGroups.includes(group.id);
-        return `<div class="checkbox-row">
-            <input id="group-${group.id}" name="group" value="${escapeHtml(group.id)}" type="checkbox" ${enabled ? 'checked' : ''} />
-            <div class="checkbox-copy">
-              <label for="group-${group.id}">${escapeHtml(group.label)} <span class="badge">${group.tools.length} tools</span></label>
-              <span>${escapeHtml(group.description)}</span>
-            </div>
-          </div>`;
-    }).join('');
-
+    /**
+     * One client, with its permissions.
+     *
+     * Permissions are rendered per client rather than per tool because the
+     * question a person actually has is "what can ChatGPT do", not "who can
+     * send mail". Collapsed by default: there are forty-odd tools and the
+     * common case is wanting to see which clients exist, not to audit one.
+     */
     const renderClientRow = (client: UiClient, unattributed: boolean) => {
         const name = escapeHtml(client.clientName?.trim() || 'Unnamed client');
-        return `<div class="client">
+        const overrides = client.policy ?? {};
+        const changed = Object.keys(overrides).length;
+        const restricted = ALL_TOOL_NAMES.filter(
+            (tool) => tierFor(tool, overrides) !== 'allow'
+        ).length;
+
+        return `<div class="client" id="client-${escapeHtml(client.clientId)}">
             <div class="client-main">
               <span class="client-name">${name}</span>
               <span class="client-meta">Authorized ${escapeHtml(relativeTime(client.promotedAt))} · Last used ${escapeHtml(relativeTime(client.lastSeenAt))}${
@@ -1082,12 +1246,22 @@ export function renderUiPage(
                   client.lastSeenFrom ? ` · from ${escapeHtml(client.lastSeenFrom)}` : ''
               }</span>
               ${unattributed ? '<span class="client-meta">Authorized before Courier recorded which user connected it.</span>' : ''}
+              <span class="client-meta">${restricted} of ${ALL_TOOL_NAMES.length} tools restricted${changed ? ` · ${changed} set by you` : ' · all at their defaults'}</span>
             </div>
             <form method="post" action="/ui/clients/revoke">
               <input type="hidden" name="clientId" value="${escapeHtml(client.clientId)}" />
               <button class="button danger" type="submit">Revoke</button>
             </form>
-          </div>`;
+          </div>
+          <details class="client-policy">
+            <summary><span>Permissions for ${name}</span></summary>
+            <p class="card-intro">
+              Every tool is offered to every client; this decides what happens when one is
+              called. Changing a permission takes effect immediately and needs no
+              reconnection.
+            </p>
+            ${renderPolicyGroups(client, overrides)}
+          </details>`;
     };
 
     const clientRows = clients.map((client) => renderClientRow(client, false)).join('');
@@ -1233,29 +1407,6 @@ export function renderUiPage(
             </div>
             <div class="client-list">${clientsContent}</div>
           </section>
-
-          <details class="card advanced">
-            <summary>
-              <span>
-                <strong>Advanced — available tools</strong>
-                <span class="card-intro">${visibleToolCount} of ${totalToolCount} tools offered to your MCP clients.</span>
-              </span>
-            </summary>
-            <form method="post" action="/ui/tools">
-              <p class="card-intro">
-                Turn off anything you do not use. Hidden tools are not offered to any client and cannot be
-                called, which also leaves more room in the model's context for the ones you do use.
-                This setting applies to your identity only.
-              </p>
-              <div class="form-grid">
-                ${toolGroupRows}
-              </div>
-              <div class="actions">
-                <button class="button primary" type="submit">${checkIcon} Save tool settings</button>
-                <span class="hint">Account tools are always available; they are how clients find and target your accounts.</span>
-              </div>
-            </form>
-          </details>
 
           <div class="actions">
             <p class="footer-note">Courier only exposes accounts to the authenticated identity that configured them.</p>

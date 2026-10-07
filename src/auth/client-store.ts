@@ -4,6 +4,8 @@ import { dirname } from 'node:path';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 
+import { type Tier, isTier } from '../policy/tiers.js';
+
 /**
  * Two-phase client registry.
  *
@@ -42,6 +44,15 @@ interface StoredClient {
     lastSeenAt?: number;
     /** Where it presented it from. A client name says nothing about which machine. */
     lastSeenFrom?: string;
+    /**
+     * Per-tool permissions, holding only what a human has deliberately changed.
+     *
+     * Sparse on purpose. Storing a full table would freeze today's defaults
+     * into every client that ever connected, so revising a default later would
+     * silently fail to reach them -- and the UI could not tell a deliberate
+     * choice from an inherited one.
+     */
+    policy?: Record<string, Tier>;
 }
 
 /** A promoted client with the metadata the settings UI needs to describe it. */
@@ -53,6 +64,8 @@ export interface AuthorizedClient {
     promotedAt?: number;
     lastSeenAt?: number;
     lastSeenFrom?: string;
+    /** Only the tools whose tier was deliberately set for this client. */
+    policy?: Record<string, Tier>;
 }
 
 interface ClientFileData {
@@ -209,6 +222,49 @@ export class CourierClientStore implements OAuthRegisteredClientsStore {
         return true;
     }
 
+    /**
+     * The tiers deliberately set for a client, or undefined when it is unknown.
+     *
+     * Undefined and empty are different answers and must stay so: an unknown
+     * client has no policy because it does not exist, while a known one with no
+     * overrides runs entirely on defaults. Collapsing them would let a revoked
+     * client's calls be judged against defaults rather than refused.
+     */
+    async policyFor(clientId: string): Promise<Record<string, Tier> | undefined> {
+        const clients = await this.load();
+        const entry = clients.get(clientId);
+        if (!entry) return undefined;
+        return entry.policy ?? {};
+    }
+
+    /**
+     * Sets one tool's tier for one client, or clears it back to the default.
+     *
+     * Refuses a client that is not promoted. A provisional registration is
+     * anonymous and expires, so attaching permissions to one would let anybody
+     * on the internet create policy rows.
+     */
+    async setToolTier(clientId: string, toolName: string, tier: Tier | null): Promise<boolean> {
+        const clients = await this.load();
+        const entry = clients.get(clientId);
+        if (!entry || entry.expiresAt !== null) return false;
+        if (tier !== null && !isTier(tier)) return false;
+
+        const policy = { ...entry.policy };
+        if (tier === null) {
+            delete policy[toolName];
+        } else {
+            policy[toolName] = tier;
+        }
+
+        clients.set(clientId, {
+            ...entry,
+            policy: Object.keys(policy).length > 0 ? policy : undefined,
+        });
+        await this.flush(clients);
+        return true;
+    }
+
     /** Records that a client is still in use. Best-effort: never blocks a request. */
     async touchClient(clientId: string, source?: string): Promise<void> {
         const clients = await this.load();
@@ -241,6 +297,7 @@ export class CourierClientStore implements OAuthRegisteredClientsStore {
                 promotedAt: entry.promotedAt,
                 lastSeenAt: entry.lastSeenAt,
                 lastSeenFrom: entry.lastSeenFrom,
+                policy: entry.policy,
             }))
             .sort((a, b) => (b.lastSeenAt ?? b.promotedAt ?? 0) - (a.lastSeenAt ?? a.promotedAt ?? 0));
     }

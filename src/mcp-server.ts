@@ -4,10 +4,10 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 
 import { getAccountManager } from './account-manager.js';
 import { getRequestContext } from './request-context.js';
-import { recordToolListServed, shouldNotifyToolListChanged } from './tool-list-watch.js';
 import { tools } from './tools/index.js';
-import { isToolVisible } from './tools/groups.js';
 import { isToolSupported, unsupportedToolMessage } from './tools/scopes.js';
+import { enforce } from './policy/enforce.js';
+import { resolvePolicy } from './policy/registry.js';
 import { getClient } from 'jmap-courier';
 
 const isEnabled = (value: string | undefined) => value === '1' || value === 'true';
@@ -36,6 +36,23 @@ async function currentCapabilities(): Promise<ReadonlySet<string> | null> {
 
 /** Opt-in, matching MCP_ACCESS_LOG: one line per tool call. */
 const TOOL_LOG_ENABLED = isEnabled(process.env.MCP_TOOL_LOG);
+
+/**
+ * Notes that a call ran without a policy check.
+ *
+ * Deliberately noisy in intent: a deployment with no enforcement must not be
+ * indistinguishable from one with it. Rate-limited to once per reason so stdio
+ * does not emit a line per call.
+ */
+const unenforcedReported = new Set<string>();
+
+function logUnenforced(toolName: string, reason: string): void {
+    if (unenforcedReported.has(reason)) return;
+    unenforcedReported.add(reason);
+    console.warn(
+        `[policy] not enforced: ${reason}. Tools run unrestricted, starting with ${toolName}.`
+    );
+}
 
 /**
  * Logs a tool call by name and argument *keys* only.
@@ -74,15 +91,16 @@ export function createMcpServer(): Server {
     // handled `initialize`, so it has no client info to report.
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
-        const disabled = getAccountManager().getDisabledToolGroups();
-        // Two independent filters. Tool groups are what the user chose to see;
-        // capabilities are what the credential can actually do. Offering a tool
-        // that can only ever 403 wastes a call and teaches the model nothing.
+        // One filter, not two. What a client is *permitted* to do is enforced
+        // at tools/call and never by hiding a tool: clients cache this list,
+        // and several only notice a change when the server is removed and
+        // re-added by hand, so a permission change must not alter it.
+        //
+        // Capability is different. A tool the credential cannot use could only
+        // ever 403, which wastes a call and teaches the model nothing.
         const available = await currentCapabilities();
-        recordToolListServed(getRequestContext()?.authInfo?.clientId);
         return {
             tools: tools
-                .filter((tool) => isToolVisible(tool.name, disabled))
                 .filter((tool) => isToolSupported(tool.name, available))
                 .map((tool) => ({
                     name: tool.name,
@@ -101,33 +119,56 @@ export function createMcpServer(): Server {
             throw new Error(`Unknown tool: ${name}`);
         }
 
-        const manager = getAccountManager();
         const clientId = getRequestContext()?.authInfo?.clientId;
 
-        // Hiding a tool from tools/list is not enough on its own: clients cache
-        // that list, and a client holding a stale copy would keep calling a tool
-        // the user has since turned off. Enforce the preference here too, where
-        // the call actually happens.
-        if (!isToolVisible(name, manager.getDisabledToolGroups())) {
-            const message = `Tool "${name}" is turned off for this account. Enable it in Courier's settings to use it.`;
-            logToolCall(name, args, startedAt, message);
-            await notifyToolListChanged(extra, clientId, manager.getToolSettingsUpdatedAt());
-            throw new Error(message);
-        }
-
-        // Same reasoning as the visibility check above: a cached tool list can
-        // name a tool this token cannot use. Fail here with an explanation
-        // instead of spending a round trip to be told "Disallowed capabilities".
+        // A cached tool list can name a tool this token cannot use. Fail here
+        // with an explanation instead of spending a round trip to be told
+        // "Disallowed capabilities".
         if (!isToolSupported(name, await currentCapabilities())) {
             const message = unsupportedToolMessage(name);
             logToolCall(name, args, startedAt, message);
             throw new Error(message);
         }
 
-        // Piggyback the staleness notification on this request's stream. It
-        // arrives too late to affect the call in progress -- the model chose
-        // this tool from the list it already had -- but it corrects the next turn.
-        await notifyToolListChanged(extra, clientId, manager.getToolSettingsUpdatedAt());
+        // Per-client permissions. Checked here rather than by hiding tools,
+        // because every tool stays advertised: clients cache the list, and
+        // several only notice a change when the server is removed and re-added
+        // by hand.
+        const policy = await resolvePolicy(clientId);
+        if (policy.unknownClient) {
+            // A valid token for a client the registry has forgotten.
+            // verifyAccessToken already rejects this, so arriving here means
+            // the two disagree -- refuse rather than judge the call against
+            // defaults, which would grant a revoked client everything a new
+            // one gets.
+            const message =
+                'This client is no longer registered with Courier. Remove the server from the application and add it again.';
+            logToolCall(name, args, startedAt, message);
+            throw new Error(message);
+        }
+
+        if (policy.unenforced) {
+            // Said once per call at most, and only when the log is on. A server
+            // running without enforcement should not be able to look like one
+            // running with it.
+            logUnenforced(name, policy.unenforced);
+        } else {
+            const decision = await enforce({
+                toolName: name,
+                args,
+                overrides: policy.overrides,
+                canElicit: server.getClientCapabilities()?.elicitation !== undefined,
+                elicit: (message) => server.elicitInput({
+                    message,
+                    requestedSchema: { type: 'object', properties: {} },
+                }),
+            });
+
+            if (!decision.allowed) {
+                logToolCall(name, args, startedAt, decision.reason);
+                throw new Error(decision.reason);
+            }
+        }
 
         try {
             const result = await tool.handler(args || {});
@@ -156,30 +197,4 @@ export function createMcpServer(): Server {
     });
 
     return server;
-}
-
-type NotificationSender = { sendNotification: (n: { method: string }) => Promise<void> };
-
-async function notifyToolListChanged(
-    extra: unknown,
-    clientId: string | undefined,
-    settingsUpdatedAt: number | undefined
-): Promise<void> {
-    if (!shouldNotifyToolListChanged(clientId, settingsUpdatedAt)) return;
-
-    const sender = extra as NotificationSender | undefined;
-    if (typeof sender?.sendNotification !== 'function') return;
-
-    // Best-effort. A client that cannot receive this still gets the refusal,
-    // so failing to deliver must never fail the call.
-    try {
-        await sender.sendNotification({ method: 'notifications/tools/list_changed' });
-        // Record the settings version the client has now been told about, not
-        // the wall clock. Stamping "now" would re-notify on every subsequent
-        // call whenever the two clocks disagree, and the point is to say this
-        // once per change.
-        recordToolListServed(clientId, settingsUpdatedAt);
-    } catch {
-        // Ignored: delivery is opportunistic, not a correctness requirement.
-    }
 }

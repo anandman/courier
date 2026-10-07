@@ -14,13 +14,27 @@
  * consumer that wanted to bypass it would simply not use the CLI.
  */
 
-import { READ_ONLY_TOOLS, consequenceOf, defaultTierFor } from '../policy/tiers.js';
+import { READ_ONLY_TOOLS, consequenceOf } from '../policy/tiers.js';
 
 export { READ_ONLY_TOOLS };
 
-/** Whether this tool needs `--yes`, or an interactive confirmation. */
+/**
+ * Whether this tool needs `--yes`, or an interactive confirmation.
+ *
+ * Derived from the shared read/write classification, NOT from the server's
+ * default tier, because the two answer different questions. The server's tier
+ * asks "may this client do this at all"; `--yes` asks "did the person typing
+ * this mean it". A tool can perfectly well be permitted for the CLI and still
+ * worth a beat before it runs -- drafting into a real mailbox is the obvious
+ * case, and the server now allows it because it is reversible, which is not a
+ * reason to stop asking the person at the keyboard.
+ *
+ * Tying them together would also mean a settings change on the server silently
+ * altered what a command does locally, which is not a connection anyone would
+ * expect.
+ */
 export function requiresConfirmation(toolName: string): boolean {
-    return defaultTierFor(toolName) !== 'allow';
+    return !READ_ONLY_TOOLS.has(toolName);
 }
 
 /** Why, phrased for the person who just hit the gate. */

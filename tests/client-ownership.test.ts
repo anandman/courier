@@ -142,7 +142,7 @@ describe('client list UI', () => {
     const user = { userId: 'anand@example.com', email: 'anand@example.com' };
 
     it('lists a client with a revoke control', () => {
-        const html = renderUiPage(user, [], null, null, [], [
+        const html = renderUiPage(user, [], null, null, [
             { clientId: 'c1', clientName: 'ChatGPT', promotedAt: Date.now() - 3600_000 },
         ]);
 
@@ -153,7 +153,7 @@ describe('client list UI', () => {
     });
 
     it('flags unattributed clients rather than presenting them as the user’s own', () => {
-        const html = renderUiPage(user, [], null, null, [], [], [
+        const html = renderUiPage(user, [], null, null, [], [
             { clientId: 'legacy', clientName: 'Old client' },
         ]);
 
@@ -162,11 +162,11 @@ describe('client list UI', () => {
     });
 
     it('says so when nothing is authorized', () => {
-        expect(renderUiPage(user, [], null, null, [], [], [])).toContain('No clients authorized yet');
+        expect(renderUiPage(user, [], null, null, [], [])).toContain('No clients authorized yet');
     });
 
     it('escapes client names', () => {
-        const html = renderUiPage(user, [], null, null, [], [
+        const html = renderUiPage(user, [], null, null, [
             { clientId: 'x', clientName: '<img src=x onerror=alert(1)>' },
         ]);
 
@@ -226,10 +226,109 @@ describe('recording which machine a client runs on', () => {
             [],
             null,
             null,
-            [],
             await store.listClientsForOwner('anand@example.com')
         );
 
         expect(html).toContain('100.64.0.2');
+    });
+});
+
+describe('per-client permissions', () => {
+    it('reports no overrides for a promoted client that has none', async () => {
+        await register('c1');
+        await store.promoteClient('c1', 'anand@example.com');
+
+        expect(await store.policyFor('c1')).toEqual({});
+    });
+
+    /**
+     * Undefined and empty are different answers and must stay so. An unknown
+     * client has no policy because it does not exist; a known one with no
+     * overrides runs on defaults. Collapsing them would let a revoked client's
+     * calls be judged against defaults rather than refused.
+     */
+    it('reports undefined for a client it does not know', async () => {
+        expect(await store.policyFor('ghost')).toBeUndefined();
+    });
+
+    it('stores a tier for one tool', async () => {
+        await register('c1');
+        await store.promoteClient('c1', 'anand@example.com');
+
+        expect(await store.setToolTier('c1', 'send_email', 'allow')).toBe(true);
+        expect(await store.policyFor('c1')).toEqual({ send_email: 'allow' });
+    });
+
+    it('keeps each client separate', async () => {
+        await register('a');
+        await register('b');
+        await store.promoteClient('a', 'anand@example.com');
+        await store.promoteClient('b', 'anand@example.com');
+
+        await store.setToolTier('a', 'send_email', 'allow');
+
+        expect(await store.policyFor('a')).toEqual({ send_email: 'allow' });
+        expect(await store.policyFor('b')).toEqual({});
+    });
+
+    it('clears a tier back to the default', async () => {
+        await register('c1');
+        await store.promoteClient('c1', 'anand@example.com');
+        await store.setToolTier('c1', 'send_email', 'allow');
+
+        expect(await store.setToolTier('c1', 'send_email', null)).toBe(true);
+        expect(await store.policyFor('c1')).toEqual({});
+    });
+
+    /**
+     * Only deliberate choices are stored, so revising a default later actually
+     * reaches existing clients -- and the UI can tell a decision from an
+     * inherited value.
+     */
+    it('stores nothing for a client left entirely on defaults', async () => {
+        await register('c1');
+        await store.promoteClient('c1', 'anand@example.com');
+        await store.setToolTier('c1', 'send_email', 'allow');
+        await store.setToolTier('c1', 'send_email', null);
+
+        const [client] = await store.listClientsForOwner('anand@example.com');
+        expect(client.policy).toBeUndefined();
+    });
+
+    /**
+     * Registration is anonymous by RFC 7591, so attaching permissions to a
+     * provisional entry would let anyone on the internet create policy rows.
+     */
+    it('refuses to set a tier on a client nobody has authorized', async () => {
+        await register('provisional');
+
+        expect(await store.setToolTier('provisional', 'send_email', 'allow')).toBe(false);
+        expect(await store.policyFor('provisional')).toEqual({});
+    });
+
+    it('refuses a tier that is not one of the three', async () => {
+        await register('c1');
+        await store.promoteClient('c1', 'anand@example.com');
+
+        expect(await store.setToolTier('c1', 'send_email', 'maybe' as never)).toBe(false);
+        expect(await store.policyFor('c1')).toEqual({});
+    });
+
+    it('survives a restart', async () => {
+        await register('c1');
+        await store.promoteClient('c1', 'anand@example.com');
+        await store.setToolTier('c1', 'delete_emails', 'deny');
+
+        const reopened = new CourierClientStore({ filePath: join(dir, 'oauth-clients.json') });
+        expect(await reopened.policyFor('c1')).toEqual({ delete_emails: 'deny' });
+    });
+
+    it('is reported alongside the client in the settings list', async () => {
+        await register('c1', 'ChatGPT');
+        await store.promoteClient('c1', 'anand@example.com');
+        await store.setToolTier('c1', 'send_email', 'allow');
+
+        const [client] = await store.listClientsForOwner('anand@example.com');
+        expect(client.policy).toEqual({ send_email: 'allow' });
     });
 });
