@@ -42,6 +42,8 @@ import { createUserAccountManager } from './user-accounts.js';
 import {
     renderLoginPage,
     renderNoVaultPage,
+    renderOobCodePage,
+    renderOobErrorPage,
     renderUiPage,
     renderUnknownClientPage,
 } from './ui.js';
@@ -331,6 +333,60 @@ async function startHttpServer() {
 
         app.get('/auth/mcp/callback', (req, res, next) => {
             provider.handleUpstreamCallback(req, res).catch(next);
+        });
+
+        // The out-of-band redirect target for command-line clients.
+        //
+        // A CLI normally catches its redirect on a loopback port, which only
+        // works when the browser runs on the same machine as the CLI. When it
+        // does not -- the usual case for a server reached over a remote shell
+        // -- the browser lands on a 127.0.0.1 address that refuses the
+        // connection, so a successful authorization looks like a failure and
+        // the code sits unexplained in the address bar.
+        //
+        // This page displays the code instead, which is the flow people already
+        // know from other command-line tools. It is a generic endpoint, not
+        // specific to any client: any client that registers this redirect URI
+        // may use it.
+        //
+        // Renders only what is in the query string -- no server state is read
+        // and no session is required. The browser already holds the code in its
+        // URL, so demanding a session here would protect nothing while breaking
+        // the case where consent completed in a different browser.
+        app.get('/auth/oob', (req, res) => {
+            // A code must never be cached or leaked through a Referer header to
+            // anything this page might load.
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Referrer-Policy', 'no-referrer');
+
+            const error = getHeaderValue(req.query.error as string | string[] | undefined);
+            if (error) {
+                const description = getHeaderValue(
+                    req.query.error_description as string | string[] | undefined
+                );
+                console.warn(`[auth] out-of-band authorization reported ${JSON.stringify(error)}`);
+                res.status(400).type('html').send(renderOobErrorPage(error, description));
+                return;
+            }
+
+            const code = getHeaderValue(req.query.code as string | string[] | undefined);
+            if (!code) {
+                res.status(400)
+                    .type('html')
+                    .send(
+                        renderOobErrorPage(
+                            'invalid_request',
+                            'This page was opened without an authorization code.'
+                        )
+                    );
+                return;
+            }
+
+            // Logged without the code. The whole point of this endpoint is that
+            // the code is a live credential for the next five minutes, and the
+            // journal is the last place it should end up.
+            console.log('[auth] displayed an out-of-band authorization code');
+            res.type('html').send(renderOobCodePage(code));
         });
 
         // RFC 8414 puts authorization server metadata at the bare well-known

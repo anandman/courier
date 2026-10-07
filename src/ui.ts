@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { ALWAYS_AVAILABLE_TOOLS, TOOL_GROUPS, type ToolGroupId } from './tools/groups.js';
 
 type AuthMode = 'oidc' | 'proxy' | 'none';
@@ -34,6 +36,51 @@ const styles = `
   }
 
   * { box-sizing: border-box; }
+
+  /*
+   * The code page stacks elements that carry no margin of their own -- a
+   * <pre> and a <button> -- so they sat flush against the notice below them.
+   * Every other card gets its rhythm from <p> defaults, which is fine until a
+   * page has no paragraphs between its parts.
+   *
+   * Laying this one out as a column with an explicit gap spaces every child
+   * identically, whatever tags it is built from, instead of hanging the layout
+   * on which elements happen to have browser defaults.
+   */
+  .center-card.oob {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .center-card.oob > * { margin: 0; }
+
+  .center-card.oob .code-block,
+  .center-card.oob .notice { width: 100%; }
+
+  /* A command name reads badly when broken across a line. */
+  .center-card.oob code { white-space: nowrap; }
+
+  /*
+   * The authorization code on the out-of-band page. Monospaced and wrapping,
+   * because it is long, and a code that a person has to copy by hand must not
+   * be truncated or re-flowed in a way that loses a character.
+   */
+  .code-block {
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    text-align: left;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    user-select: all;
+  }
 
   body {
     margin: 0;
@@ -657,6 +704,13 @@ const envelopeIcon = `
     <path d="m5.25 7.5 6.75 5.25 6.75-5.25" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>`;
 
+/** Two overlapping sheets: the conventional copy glyph. */
+const copyIcon = `
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <rect x="9" y="9" width="11" height="11" rx="2" />
+  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+</svg>`;
+
 const checkIcon = `
   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
     <path d="m6.5 12.25 3.25 3.25 7.75-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -675,7 +729,23 @@ function escapeHtml(value: string): string {
     });
 }
 
-function documentShell(title: string, body: string): string {
+const BASE_CSP =
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+/**
+ * @param script Inline script to include, allowed by its own SHA-256 hash.
+ *
+ * Hashed rather than permitted wholesale: `script-src 'unsafe-inline'` would
+ * admit any inline script on the page, including one injected through a
+ * rendering mistake, which is exactly what `default-src 'none'` is here to
+ * prevent. A hash admits precisely these bytes and nothing else, so adding
+ * behaviour to one page costs nothing on the others.
+ */
+function documentShell(title: string, body: string, script?: string): string {
+    const csp = script
+        ? `${BASE_CSP}; script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'`
+        : BASE_CSP;
+
     return `<!doctype html>
 <html lang="en">
   <head>
@@ -683,11 +753,11 @@ function documentShell(title: string, body: string): string {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#263da9" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'" />
+    <meta http-equiv="Content-Security-Policy" content="${csp}" />
     <title>${escapeHtml(title)}</title>
     <style>${styles}</style>
   </head>
-  <body>${body}</body>
+  <body>${body}${script ? `<script>${script}</script>` : ''}</body>
 </html>`;
 }
 
@@ -766,6 +836,128 @@ export function renderUnknownClientPage(): string {
             Some apps cache the old registration until they are fully restarted.
           </div>
           <p><a href="/ui">Review your authorized applications</a></p>
+        </main>`
+    );
+}
+
+/**
+ * Shown to a person finishing a command-line login: displays the
+ * authorization code for them to copy back.
+ *
+ * This is the out-of-band redirect target, and it exists because the
+ * alternative is worse in a specific way. A CLI normally catches its redirect
+ * on a loopback port, which works only when the browser is on the same machine
+ * as the CLI. When it is not -- the usual case for a server -- the browser
+ * lands on a `127.0.0.1` address that refuses the connection, and the person
+ * sees a browser error page after a successful authorization. The code is
+ * sitting in the address bar, but nothing says so, and every signal on screen
+ * says something broke.
+ *
+ * So the server renders it instead. The flow becomes the one people already
+ * know from other tools: sign in, land on a page that shows a code, paste it
+ * back.
+ *
+ * Safe to display because of PKCE, which Courier requires. The code is
+ * single-use, expires in five minutes, and can only be exchanged by a client
+ * holding the verifier whose hash was sent with the authorization request --
+ * which never leaves the machine running the CLI. A code read off this screen
+ * by someone else buys them nothing.
+ *
+ * The caller is responsible for `Cache-Control: no-store` and a referrer
+ * policy; this function only renders.
+ */
+export function renderOobCodePage(code: string): string {
+    return documentShell(
+        'Courier',
+        `<main class="center-card oob">
+          ${brandMark()}
+          <h1>Copy this code</h1>
+          <p>Paste it back into the terminal where you started <code>courier auth login</code>.</p>
+          <pre class="code-block" id="code">${escapeHtml(code)}</pre>
+          <button class="button primary" id="copy" type="button">${copyIcon}<span id="copy-label">Copy code</span></button>
+          <div class="notice">
+            This code can be used once, expires in five minutes, and is useless
+            to anyone but the command that requested it.
+          </div>
+        </main>`,
+        COPY_SCRIPT
+    );
+}
+
+/**
+ * The copy button's behaviour.
+ *
+ * Reads the code out of the DOM instead of having it interpolated into a
+ * JavaScript string literal. The code is ours, but it arrives here through a
+ * query string, and HTML-escaping it does not make it safe inside a script --
+ * those are different escaping rules, and relying on the wrong one is how an
+ * injection gets written. Taking it from `textContent` means there is no
+ * JavaScript context for it to escape from, and it keeps these bytes constant
+ * so the CSP hash can be computed once.
+ *
+ * The button is an addition, not a requirement: `user-select: all` on the code
+ * block already makes one click select the whole thing, which is what happens
+ * when the clipboard API is unavailable -- on an insecure origin, or where the
+ * permission is refused.
+ */
+const COPY_SCRIPT = `
+(function () {
+  var button = document.getElementById('copy');
+  var label = document.getElementById('copy-label');
+  var block = document.getElementById('code');
+  if (!button || !label || !block) return;
+
+  function select() {
+    var range = document.createRange();
+    range.selectNodeContents(block);
+    var selection = window.getSelection();
+    if (!selection) return;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  button.addEventListener('click', function () {
+    var code = block.textContent || '';
+    function confirmed(text) {
+      label.textContent = text;
+      setTimeout(function () { label.textContent = 'Copy code'; }, 2000);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code).then(function () {
+        confirmed('Copied');
+      }, function () {
+        // Say what happened rather than claiming success: a label reading
+        // "Copied" over an empty clipboard sends someone back to the terminal
+        // to paste nothing.
+        select();
+        confirmed('Press Ctrl-C to copy');
+      });
+      return;
+    }
+    select();
+    confirmed('Press Ctrl-C to copy');
+  });
+})();
+`.trim();
+
+/**
+ * Shown when the out-of-band redirect arrives without a code.
+ *
+ * Almost always a declined consent screen, where the provider redirects with
+ * `error` instead. Rendered as its own page rather than folded into the code
+ * page, so nothing that looks like a code is ever shown when there is none.
+ */
+export function renderOobErrorPage(error: string, description?: string): string {
+    return documentShell(
+        'Courier',
+        `<main class="center-card oob">
+          ${brandMark()}
+          <h1>Authorization was not completed</h1>
+          <p>${escapeHtml(description || 'The sign-in did not finish, so no code was issued.')}</p>
+          <div class="notice">
+            <strong>Reported as:</strong> ${escapeHtml(error)}<br />
+            Return to the terminal and run <code>courier auth login</code> again.
+          </div>
         </main>`
     );
 }
