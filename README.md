@@ -29,6 +29,21 @@ npm run build
    (`~/.codex/config.toml`) take the same command and path in their own formats
    — see [Getting Started](docs/getting-started.md#connect-a-client-local).
 
+## Command Line
+
+`courier` is also a client. It authorizes against a running Courier over OAuth,
+so a script or another agent can use the tools without a copy of your mail
+credentials:
+
+```bash
+courier auth login --server https://your-courier.example/mcp
+courier search-emails --query invoice --limit 20
+courier draft-reply --email-id StnZCocGyMEV --body "Sounds good." --yes
+```
+
+Results are JSON on stdout; a non-zero exit prints nothing there, so a failure
+can never be mistaken for an empty answer. See [CLI](docs/cli.md).
+
 ## Remote Hosting (Optional)
 
 Courier defaults to local `stdio` transport. To host it remotely over Streamable HTTP:
@@ -90,6 +105,7 @@ stateless HTTP call without changing the persisted default.
 
 ## Documentation
 
+- [CLI](docs/cli.md) - `courier` as a command-line client, and its exit codes
 - [Getting Started](docs/getting-started.md) - Full setup guide
 - [Configuration](docs/configuration.md) - Multi-account, CalDAV options
 - [Tools Reference](docs/tools.md) - All 36 tools with parameters

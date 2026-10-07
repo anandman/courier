@@ -1,5 +1,99 @@
 # Unreleased Changes (vs. GitHub `main` @ `2a0a636`)
 
+## New: `courier` is a command-line client as well as a server
+
+`courier auth login` authorizes a machine against a running Courier over OAuth
+2.1 with PKCE, registering itself via RFC 7591 dynamic client registration.
+Every tool is then a subcommand, with flags derived from the server's own
+schemas:
+
+```bash
+courier auth login --server https://your-courier.example/mcp
+courier search-emails --query invoice --limit 20 --all
+courier draft-reply --email-id StnZCocGyMEV --body "Sounds good." --yes
+```
+
+The point is that a consumer no longer needs a copy of the JMAP API token or
+the DAV app password. It holds a refresh token for Courier; the mail
+credentials stay on the server, in one copy each, and can be rotated in one
+place.
+
+**The exit code is the contract.** `courier exit-codes` prints it as JSON.
+Exit 0 means the server answered the exact question asked, completely; every
+other code writes nothing data-shaped to stdout — not a partial page set, not
+an empty array. A consumer piping stdout into a cache cannot ingest a failure
+even if it ignores the exit code, because there is nothing there to ingest. The
+corollary is what makes it useful: an empty result *with* exit 0 is
+trustworthy.
+
+`--all` walks a paged result set and is all-or-nothing: if any page fails, or
+the page ceiling is reached first, the pages already collected are discarded
+and the command exits `incomplete` rather than printing a partial set that
+looks whole.
+
+Anything that is not a read requires `--yes`, or an interactive confirmation
+when there is a terminal. Without either, the command exits `forbidden` and
+does nothing — so an unattended script cannot send mail by omission. The CLI
+implements no *deny*: refusing a tool outright is a per-client policy decision
+and belongs to the server.
+
+`auth login` opens a browser and catches the redirect locally, which is what a
+CLI run on its user's own machine should do. When the browser is somewhere else
+— SSH, mosh, a container — `auth login --remote` sends it to a new Courier page
+that **displays the authorization code** to paste back, the flow familiar from
+`gcloud` and `gh`. That page is a generic out-of-band redirect target at
+`GET /auth/oob`, available to any client that registers the URI; it sets
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and showing the
+code is safe because Courier already mandates PKCE — the code is single-use,
+lives five minutes, and is exchangeable only by the holder of the verifier,
+which never leaves the CLI's machine.
+
+Nothing tries to detect which situation you are in: `SSH_CONNECTION` is unset
+under mosh and most remote shells, and `DISPLAY` says only that a screen exists
+on the machine. A wrong guess fails in the worst available way — the
+authorization succeeds, the redirect goes to a loopback port on another host,
+and the only symptom is a command that times out. So the default is optimistic
+*and* recovers: it accepts a pasted redirect URL as well, so landing on an
+unreachable `127.0.0.1` page costs a copy rather than the login.
+
+Without a terminal to paste at, the flow splits into `auth login` (prints a
+URL, exits 0) and `auth login --code "<code>"`, with the PKCE verifier and
+state persisted between them. A login must complete within 10 minutes — the
+window Courier itself allows between `/authorize` and the identity provider's
+callback.
+
+`courier mcp [--stdio|--http]` runs the server. `node dist/index.js` and the
+`courier-mcp` executable continue to work unchanged.
+
+See [docs/cli.md](docs/cli.md).
+
+## Fixed: a bad command line reported as an authentication failure
+
+Authentication was checked before the command line was parsed, so with no
+stored credential *every* mistake came back as `no-auth` — a mistyped flag sent
+an operator to inspect a credential that was never the problem, and the
+documented `usage` code was unreachable. Found by a consumer session testing
+the contract.
+
+The CLI now validates arguments against the schemas it ships with before
+touching the credential store, and `courier help <tool>` needs no credential at
+all. An unrecognised tool *name* still defers to the server — this build may be
+talking to a newer Courier carrying tools it has never heard of — but the
+message says the name is unknown here too, so the operator is not sent to the
+wrong place.
+
+## Fixed: `switch_account` reported failure as data
+
+Switching to an account that does not exist returned `success: false` with a
+message, which left the MCP envelope reporting a *successful* call. A client
+that checks the envelope — which is all an `isError` check or an exit code can
+see — took that as a completed switch and carried on against whichever account
+was already current, silently operating on the wrong mailbox.
+
+It now throws, which is what every other tool already did for the same
+condition: `createAccountScopedTool` refuses an unknown `account` parameter
+that way on all of them. This one was the exception.
+
 ## Breaking: renamed again, to Courier
 
 **Email Courier** is now simply **Courier**. The previous name undersold it:
