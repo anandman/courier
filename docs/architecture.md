@@ -192,3 +192,53 @@ JMAP and CalDAV are fundamentally different:
 - Different server URLs
 
 Keeping them separate is cleaner.
+
+## Considered and Deliberately Not Built
+
+Two things get proposed repeatedly, by people and by agents reviewing the tool
+surface. Both are reasonable on their face and both are recorded here so the
+reasoning does not have to be rediscovered — particularly the first, where
+building the obvious half would ship the failure it is meant to prevent.
+
+### Server-side rules and filters (JMAP Sieve, RFC 9661)
+
+This looks like the highest-leverage thing Courier could add. Without rules,
+triage never stops repeating: every pass re-sorts the same senders and the
+agent's work has no durable effect.
+
+It is not built, and the blocker is not the rule engine.
+
+A rule removes mail **before any consumer sees it**. The standing requirement
+for this deployment is that anything the pipeline takes out of a person's
+attention must still appear somewhere they look — a silent drop is how a
+misclassification stays invisible for a month. A server-side rule is exactly
+that failure mode promoted to infrastructure: the mail is gone from the inbox,
+no consumer observed it, and nothing anywhere records that a decision was made.
+
+So the thing that makes rules safe is a **readback**: a way to ask what the
+rules actually did, which a consumer can surface. The engine without the
+readback is worse than no engine. A consumer session asked to evaluate this
+said it would decline to use rules offered on those terms, which is the correct
+answer.
+
+If this is built, build the readback first. Note also that Fastmail's support
+for the Sieve capability has not been confirmed.
+
+### File-backed attachments
+
+`get_attachment` returns content inline — text as text, anything else base64 —
+capped at 2 MiB because the result goes into a model's context.
+
+The proposal is to return a downloadable handle instead. For a client on the
+same machine that means a file path; for a remote client it means an MCP
+resource link, which requires an authenticated HTTP endpoint serving message
+content.
+
+Not built, on measurement rather than principle. The consumer that raised it
+handles 48 KB PDFs against a 2 MiB cap and reported the change would "remove a
+step but save no time". Against that, a new authenticated surface that serves
+mail bodies is a security-relevant addition, and whether the clients in use
+would fetch a resource link with their MCP token is unverified.
+
+Worth revisiting if attachments start hitting the cap, or if a client is known
+to follow resource links.
