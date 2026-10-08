@@ -53,6 +53,9 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
     'get_event',
     'list_tasks',
     'get_task',
+    // Account settings that only report
+    'get_vacation_responder',
+    'list_masked_emails',
 ]);
 
 /**
@@ -76,6 +79,10 @@ export const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set([
     'send_email',
     'send_draft',
     'forward_email',
+    // Not a single message, which is what makes it worse: while it is on, the
+    // account replies to every stranger who writes, repeatedly, and the person
+    // who turned it on is rarely the one who notices.
+    'set_vacation_responder',
     // Destructive: nothing to recover from afterwards.
     'delete_mailbox',
     'delete_contact',
@@ -91,6 +98,7 @@ export const OUTWARD_FACING_TOOLS: ReadonlySet<string> = new Set([
     'send_email',
     'send_draft',
     'forward_email',
+    'set_vacation_responder',
 ]);
 
 /**
@@ -150,6 +158,10 @@ export const REVERSIBLE_WRITE_TOOLS: ReadonlySet<string> = new Set([
     // Contacts
     'create_contact',
     'update_contact',
+    // Masked addresses: creating one affects nothing that already exists, and
+    // disabling or retiring one is reversible by re-enabling it.
+    'create_masked_email',
+    'update_masked_email',
     // Calendar and tasks
     'create_event',
     'update_event',
@@ -179,6 +191,9 @@ export function tierFor(toolName: string, overrides?: Readonly<Record<string, Ti
  * people stop reading.
  */
 export function consequenceOf(toolName: string): string {
+    if (toolName === 'set_vacation_responder') {
+        return 'makes the account reply automatically to everyone who writes, until it is turned off';
+    }
     if (OUTWARD_FACING_TOOLS.has(toolName)) {
         return 'sends a message to other people, which cannot be undone';
     }

@@ -15,7 +15,7 @@
  * file decides whether a tool may run.
  */
 
-export const TOOL_GROUP_IDS = ['email', 'contacts', 'calendar', 'tasks'] as const;
+export const TOOL_GROUP_IDS = ['email', 'settings', 'contacts', 'calendar', 'tasks'] as const;
 
 export type ToolGroupId = (typeof TOOL_GROUP_IDS)[number];
 
@@ -64,6 +64,18 @@ export const TOOL_GROUPS: ToolGroup[] = [
             'delete_emails',
             'mark_emails',
             'tag_emails',
+        ],
+    },
+    {
+        id: 'settings',
+        label: 'Account settings',
+        description: 'The auto-reply, and masked addresses that forward here.',
+        tools: [
+            'get_vacation_responder',
+            'set_vacation_responder',
+            'list_masked_emails',
+            'create_masked_email',
+            'update_masked_email',
         ],
     },
     {

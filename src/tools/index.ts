@@ -115,6 +115,18 @@ import {
     deleteEvent,
 } from './calendar.js';
 import { changesSince, changesSinceSchema } from './changes.js';
+import {
+    createMaskedEmail,
+    createMaskedEmailSchema,
+    getVacationResponder,
+    getVacationResponderSchema,
+    listMaskedEmails,
+    listMaskedEmailsSchema,
+    setVacationResponder,
+    setVacationResponderSchema,
+    updateMaskedEmail,
+    updateMaskedEmailSchema,
+} from './account-settings.js';
 import { getAttachment, getAttachmentSchema, readThread, readThreadSchema } from './thread.js';
 import {
     draftEmail,
@@ -379,6 +391,43 @@ const baseTools: ToolDefinition[] = [
         handler: (params) => tagEmails(tagEmailsSchema.parse(params)),
     },
 
+    // Account settings
+    {
+        name: 'get_vacation_responder',
+        description:
+            'Read the account auto-reply: whether it is on, its subject and body, the dates it runs between, and whether it answers only contacts.',
+        inputSchema: getVacationResponderSchema,
+        handler: getVacationResponder,
+    },
+    {
+        name: 'set_vacation_responder',
+        description:
+            'Turn the account auto-reply on or off, and set its subject, body and dates. OUTWARD-FACING: while it is on, everyone who writes receives a reply, repeatedly, until it is turned off. Pass an empty string for a date to clear it.',
+        inputSchema: setVacationResponderSchema,
+        handler: (params) => setVacationResponder(setVacationResponderSchema.parse(params)),
+    },
+    {
+        name: 'list_masked_emails',
+        description:
+            'List masked addresses on the account. Excludes deleted ones unless you ask for them. Reports totalOnAccount alongside returned, so a filtered view is not mistaken for all of them.',
+        inputSchema: listMaskedEmailsSchema,
+        handler: (params) => listMaskedEmails(listMaskedEmailsSchema.parse(params)),
+    },
+    {
+        name: 'create_masked_email',
+        description:
+            'Create a masked address that forwards to this account, for signing up to a site without giving out a real address. Set forDomain so it can be identified later. It can be disabled or deleted independently of every other address.',
+        inputSchema: createMaskedEmailSchema,
+        handler: (params) => createMaskedEmail(createMaskedEmailSchema.parse(params)),
+    },
+    {
+        name: 'update_masked_email',
+        description:
+            'Change a masked address: enable it, disable it so mail bounces, delete it to retire it, or update its description.',
+        inputSchema: updateMaskedEmailSchema,
+        handler: (params) => updateMaskedEmail(updateMaskedEmailSchema.parse(params)),
+    },
+
     // Contacts (RFC 9610)
     {
         name: 'list_address_books',
@@ -533,6 +582,11 @@ export {
     deleteEmails,
     markEmails,
     tagEmails,
+    getVacationResponder,
+    setVacationResponder,
+    listMaskedEmails,
+    createMaskedEmail,
+    updateMaskedEmail,
     listAddressBooks,
     searchContacts,
     getContact,
