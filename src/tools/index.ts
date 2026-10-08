@@ -66,8 +66,10 @@ import {
 import {
     sendEmailSchema,
     forwardEmailSchema,
+    sendDraftSchema,
     sendEmail,
     forwardEmail,
+    sendDraft,
 } from './send.js';
 
 // Organize tools
@@ -310,6 +312,13 @@ const baseTools: ToolDefinition[] = [
         handler: (params) => updateDraft(updateDraftSchema.parse(params)),
     },
     {
+        name: 'send_draft',
+        description:
+            'Send a draft that already exists, exactly as it stands -- the version a person reviewed, with its recipients, attachments and threading intact. Use this rather than send_email whenever a human should see the message first. IRREVERSIBLE: there is no unsend. A stale id (one captured before update_draft revised the draft) is refused rather than sending an unreviewed version.',
+        inputSchema: sendDraftSchema,
+        handler: (params) => sendDraft(sendDraftSchema.parse(params)),
+    },
+    {
         name: 'send_email',
         description: 'Compose and send a new email (no email bodies read).',
         inputSchema: sendEmailSchema,
@@ -495,6 +504,7 @@ export {
     searchEmails,
     getEmail,
     sendEmail,
+    sendDraft,
     forwardEmail,
     moveEmails,
     deleteEmails,

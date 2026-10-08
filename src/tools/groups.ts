@@ -56,6 +56,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
             'draft_reply',
             'draft_forward',
             'update_draft',
+            'send_draft',
             'send_email',
             'forward_email',
             'move_emails',

@@ -73,6 +73,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 export const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set([
     // Outward-facing: another person receives something.
     'send_email',
+    'send_draft',
     'forward_email',
     // Destructive: nothing to recover from afterwards.
     'delete_mailbox',
@@ -85,7 +86,11 @@ export const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set([
  * @deprecated Kept as a name for the outward-facing subset, which is worth
  * being able to talk about separately from destruction.
  */
-export const OUTWARD_FACING_TOOLS: ReadonlySet<string> = new Set(['send_email', 'forward_email']);
+export const OUTWARD_FACING_TOOLS: ReadonlySet<string> = new Set([
+    'send_email',
+    'send_draft',
+    'forward_email',
+]);
 
 /**
  * The tier a tool gets when a client has expressed no preference.
