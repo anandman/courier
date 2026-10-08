@@ -311,16 +311,26 @@ export async function updateDraft(
     const { client, manager } = await clientFor();
     const original = await client.getEmailWithBody(params.emailId);
 
-    // Refused rather than attempted. A received or sent message cannot be
-    // edited by anyone -- the protocol forbids it -- and the failure a caller
-    // would otherwise get is about mailboxes, which explains nothing.
+    // Must be IN Drafts, not merely carry the $draft keyword.
+    //
+    // Keywords survive a move, so a draft that has already been superseded --
+    // sitting in Trash because someone revised it in a mail client, which does
+    // the same create-and-retire dance this tool does -- still reads as
+    // $draft: true. Accepting that would take the stale copy the caller is
+    // holding, rebuild it, and quietly discard whatever the person wrote in
+    // between. Requiring current membership of Drafts is what detects the
+    // intervening edit: the id a caller holds stops being editable the moment
+    // someone else revises it, which is exactly the signal wanted.
     const drafts = await client.getMailboxByRole('drafts');
-    const isDraft =
-        original.keywords?.$draft === true ||
-        (drafts !== null && original.mailboxIds?.[drafts.id] === true);
-    if (!isDraft) {
+    if (!drafts) {
+        throw new Error('No Drafts mailbox found on this account, so there is nothing to revise.');
+    }
+    if (original.mailboxIds?.[drafts.id] !== true) {
+        const superseded = original.keywords?.$draft === true;
         throw new Error(
-            `${params.emailId} is not a draft, and a message that has been sent or received cannot be edited -- JMAP makes it immutable. Use draft_reply or draft_forward to write a new message about it instead.`
+            superseded
+                ? `${params.emailId} is no longer in Drafts. It was most likely revised or sent elsewhere, which replaces the message and leaves this copy behind -- revising it now would discard that newer version. Find the current draft with search_emails and use its id.`
+                : `${params.emailId} is not a draft, and a message that has been sent or received cannot be edited -- JMAP makes it immutable. Use draft_reply or draft_forward to write a new message about it instead.`
         );
     }
 

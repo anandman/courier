@@ -184,9 +184,39 @@ describe('refusing what cannot be revised', () => {
         expect(client.deleteEmails).not.toHaveBeenCalled();
     });
 
-    it('accepts a draft identified only by its mailbox', async () => {
+    it('accepts a draft that is in Drafts but carries no keyword', async () => {
         client.getEmailWithBody.mockResolvedValue({ ...original, keywords: {} });
         await expect(run({ emailId: 'old-id', body: 'x' })).resolves.toBeDefined();
+    });
+
+    /**
+     * The safeguard that matters most. Keywords survive a move, so a draft
+     * superseded by someone revising it in a mail client -- which does the same
+     * create-and-retire dance -- still reads as $draft: true while sitting in
+     * Trash. Accepting it would rebuild the stale copy the caller is holding
+     * and quietly discard whatever the person wrote in between.
+     */
+    it('refuses a draft that has been superseded since the caller saw it', async () => {
+        client.getEmailWithBody.mockResolvedValue({
+            ...original,
+            keywords: { $draft: true },
+            mailboxIds: { 'mb-trash': true },
+        });
+
+        await expect(run({ emailId: 'old-id', body: 'x' })).rejects.toThrow(/no longer in Drafts/);
+        expect(client.createDraft).not.toHaveBeenCalled();
+        expect(client.deleteEmails).not.toHaveBeenCalled();
+    });
+
+    it('tells the caller a newer version exists rather than just refusing', async () => {
+        client.getEmailWithBody.mockResolvedValue({
+            ...original,
+            keywords: { $draft: true },
+            mailboxIds: { 'mb-trash': true },
+        });
+
+        await expect(run({ emailId: 'old-id', body: 'x' })).rejects.toThrow(/discard that newer version/);
+        await expect(run({ emailId: 'old-id', body: 'x' })).rejects.toThrow(/search_emails/);
     });
 
     it('refuses to leave a draft with no recipient', async () => {

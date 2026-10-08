@@ -28,7 +28,9 @@ export const readThreadSchema = z.object({
         .finite()
         .optional()
         .default(50)
-        .describe('Maximum messages to return, oldest first. A longer thread is truncated and says so.'),
+        .describe(
+            'Maximum messages to return. A longer thread is truncated to the MOST RECENT this many, still presented oldest-first, and says so via total/returned/truncated.'
+        ),
 });
 
 export const getAttachmentSchema = z.object({
@@ -66,7 +68,17 @@ export async function readThread(params: z.infer<typeof readThreadSchema>) {
     const { client, manager } = clientFor();
     const all = await client.getThread(params.threadId, { withBodies: params.includeBodies });
 
-    const messages = all.slice(0, params.limit).map((email) => ({
+    // Truncate from the FRONT, keeping the most recent messages.
+    //
+    // Thread/get returns ids in received order, so taking the first N dropped
+    // the newest replies -- the part of a conversation most likely to matter,
+    // and the part a caller asking for "the thread" is usually after. A
+    // 50-message thread read with limit 20 showed the oldest 20 and hid
+    // everything since, while reporting a cheerful total. Reading order is
+    // still oldest-first within what is returned.
+    const kept = all.length > params.limit ? all.slice(all.length - params.limit) : all;
+
+    const messages = kept.map((email) => ({
         id: email.id,
         messageId: email.messageId,
         from: email.from,
