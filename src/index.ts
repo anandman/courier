@@ -35,7 +35,7 @@ import { AccountManager } from './account-manager.js';
 import { handleStatelessMcpRequest } from './http-transport.js';
 import { createMcpServer } from './mcp-server.js';
 import { setPolicyProvider } from './policy/registry.js';
-import { isTier } from './policy/tiers.js';
+import { isTier, type Tier } from './policy/tiers.js';
 import { createVaultStore } from './vault/index.js';
 import { describeAddresses } from './net-names.js';
 import { runWithPeerAddress, runWithRequestContext } from './request-context.js';
@@ -661,12 +661,18 @@ async function startHttpServer() {
     });
 
     /**
-     * Sets one tool's tier for one client.
+     * Saves a client's permissions, writing only the rows that changed.
      *
-     * One tool at a time rather than a whole form, because the alternative --
-     * posting the full table -- would silently overwrite a change made in
-     * another tab or on another device with whatever this page happened to be
-     * showing. Permissions are exactly the setting where a lost write matters.
+     * One form per client rather than one per tool: changing five permissions
+     * should not be five page loads. The reason the per-tool form existed --
+     * not clobbering an edit made elsewhere -- is served better by comparing
+     * each row against the value the page was rendered with, and skipping the
+     * ones nobody touched.
+     *
+     * So two people editing different tools on the same client no longer
+     * overwrite each other. Two people editing the SAME tool still conflict,
+     * which is a real conflict rather than an artefact of how the form was
+     * built.
      */
     app.post('/ui/clients/policy', async (req, res) => {
         const uiUser = resolveUiUser(req, authMode, oidcProviderConfig?.allowedUsers);
@@ -680,26 +686,26 @@ async function startHttpServer() {
             return;
         }
 
-        const clientId = String(req.body.clientId ?? '').trim();
-        const toolName = String(req.body.tool ?? '').trim();
-        const submitted = String(req.body.tier ?? '').trim();
-        if (!clientId || !toolName) {
-            res.status(400).send('clientId and tool are required');
+        const body = req.body as Record<string, unknown>;
+        const clientId = String(body.clientId ?? '').trim();
+        if (!clientId) {
+            res.status(400).send('clientId is required');
             return;
         }
 
-        // Ownership is checked here, not inside the store: the store knows
-        // about clients, not about who is signed in. Without this, anyone
-        // allowlisted could change permissions on another user's client by
-        // posting its id.
-        const owned = await clientStore.listClientsForOwner(uiUser.userId);
-        const unattributed = await clientStore.listUnattributedClients();
+        // Ownership is checked here, not in the store: the store knows about
+        // clients, not about who is signed in. Without this, anyone allowlisted
+        // could change permissions on another user's client by posting its id.
+        const [owned, unattributed] = await Promise.all([
+            clientStore.listClientsForOwner(uiUser.userId),
+            clientStore.listUnattributedClients(),
+        ]);
         const mayEdit =
             owned.some((client) => client.clientId === clientId) ||
             unattributed.some((client) => client.clientId === clientId);
         if (!mayEdit) {
             console.warn(
-                `[policy] ${uiUser.userId} tried to change ${toolName} on client ${clientId}, which is not theirs`
+                `[policy] ${uiUser.userId} tried to change permissions on client ${clientId}, which is not theirs`
             );
             // Indistinguishable from "no such client", deliberately: saying
             // which would confirm the existence of someone else's client.
@@ -707,23 +713,37 @@ async function startHttpServer() {
             return;
         }
 
-        // An empty tier means "back to the default", which is distinct from
-        // any of the three and is how a row gets un-set.
-        const tier = submitted === '' ? null : submitted;
-        if (tier !== null && !isTier(tier)) {
-            res.status(400).send('tier must be allow, confirm or deny');
-            return;
+        const changes: { tool: string; tier: Tier | null }[] = [];
+        for (const [field, value] of Object.entries(body)) {
+            if (!field.startsWith('tier.')) continue;
+            const tool = field.slice('tier.'.length);
+            const submitted = String(value ?? '').trim();
+            const previous = String(body[`was.${tool}`] ?? '').trim();
+            if (submitted === previous) continue;
+
+            // An empty value means "back to the default", which is distinct
+            // from any of the three tiers and is how a row gets un-set.
+            if (submitted !== '' && !isTier(submitted)) {
+                res.status(400).send(`tier for ${tool} must be allow, confirm or deny`);
+                return;
+            }
+            changes.push({ tool, tier: submitted === '' ? null : submitted });
         }
 
-        const changed = await clientStore.setToolTier(clientId, toolName, tier);
-        if (!changed) {
-            res.status(400).send('That client cannot hold permissions yet');
-            return;
+        for (const change of changes) {
+            const applied = await clientStore.setToolTier(clientId, change.tool, change.tier);
+            if (!applied) {
+                res.status(400).send('That client cannot hold permissions yet');
+                return;
+            }
+            console.warn(
+                `[policy] ${uiUser.userId} set ${change.tool} to ${change.tier ?? 'default'} for client ${clientId}`
+            );
         }
 
-        console.warn(
-            `[policy] ${uiUser.userId} set ${toolName} to ${tier ?? 'default'} for client ${clientId}`
-        );
+        if (changes.length === 0) {
+            console.log(`[policy] ${uiUser.userId} saved client ${clientId} with nothing changed`);
+        }
 
         res.redirect(`/ui#client-${encodeURIComponent(clientId)}`);
     });

@@ -66,6 +66,12 @@ const styles = `
   .policy-section { margin: 1rem 0 0; }
   .policy-section h3 { margin: 0; font-size: 0.85rem; }
 
+  .client-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.7rem;
+    opacity: 0.65;
+  }
+
   .tool-policy {
     display: flex;
     flex-wrap: wrap;
@@ -1073,84 +1079,91 @@ const ALL_TOOL_NAMES: string[] = POLICY_SECTIONS.flatMap((section) => section.to
 
 const TIER_LABELS: Record<Tier, string> = {
     allow: 'Allow',
-    confirm: 'Ask first',
+    // Named for what it does HERE, which is refuse.
+    //
+    // "Ask first" means asking through MCP elicitation, and elicitation needs a
+    // session: this server builds a fresh one per request, so a client's reply
+    // to a question would arrive at an instance that never asked it. The tier
+    // is implemented and refuses rather than allows when nobody can be asked,
+    // which is safe -- but offering it as "Ask first" promised a prompt that
+    // cannot be delivered, and a setting that silently means something else is
+    // worse than no setting.
+    confirm: 'Ask first (unavailable here — acts as Block)',
     deny: 'Block',
 };
 
 /**
  * One tool's permission control.
  *
- * A form per tool, posting a single change. The alternative -- one big form --
- * would overwrite a change made in another tab with whatever this page happened
- * to be showing, and permissions are exactly where a lost write matters.
+ * A row in the client's single form, not a form of its own. It used to be one
+ * form per tool with its own Set button, which meant changing five permissions
+ * was five page loads -- and the reason for it (not clobbering a change made
+ * elsewhere) is better served by only writing the rows that actually changed.
  *
- * Submits on change rather than behind a save button, which needs no script:
- * each radio is its own submit via a labelled button would be heavier, so the
- * explicit button stays but is small. The default option is offered as a fourth
- * choice so a deliberate setting can be undone back to "whatever Courier
- * decides", which is not the same as pinning it to today's default value.
+ * The value the page was rendered with travels alongside the control, so the
+ * server can tell an edited row from an untouched one. A row nobody touched is
+ * never written, so two people editing different tools on the same client do
+ * not overwrite each other; two people editing the SAME tool still conflict,
+ * which is a real conflict rather than an artefact of the form.
  */
-function renderToolPolicy(clientId: string, toolName: string, overrides: Record<string, Tier>): string {
+function renderToolPolicy(toolName: string, overrides: Record<string, Tier>): string {
     const current = overrides[toolName];
     const effective = tierFor(toolName, overrides);
     const fallback = defaultTierFor(toolName);
+    const selected = current ?? '';
+
     const options = [
-        ...TIERS.map((tier) => ({
-            value: tier as string,
-            label: TIER_LABELS[tier],
-            selected: current === tier,
-        })),
-        {
-            value: '',
-            label: `Default (${TIER_LABELS[fallback]})`,
-            selected: current === undefined,
-        },
+        { value: '', label: `Default (${TIER_LABELS[fallback]})` },
+        ...TIERS.map((tier) => ({ value: tier as string, label: TIER_LABELS[tier] })),
     ];
 
-    return `<form class="tool-policy" method="post" action="/ui/clients/policy">
-        <input type="hidden" name="clientId" value="${escapeHtml(clientId)}" />
-        <input type="hidden" name="tool" value="${escapeHtml(toolName)}" />
+    return `<div class="tool-policy">
         <div class="tool-policy-copy">
           <code>${escapeHtml(toolName)}</code>
           <span>It ${escapeHtml(consequenceOfForDisplay(toolName))}.</span>
         </div>
         <div class="tool-policy-controls">
-          <select name="tier" aria-label="Permission for ${escapeHtml(toolName)}">
+          <input type="hidden" name="was.${escapeHtml(toolName)}" value="${escapeHtml(selected)}" />
+          <select name="tier.${escapeHtml(toolName)}" aria-label="Permission for ${escapeHtml(toolName)}">
             ${options
                 .map(
                     (option) =>
-                        `<option value="${escapeHtml(option.value)}"${option.selected ? ' selected' : ''}>${escapeHtml(option.label)}</option>`
+                        `<option value="${escapeHtml(option.value)}"${option.value === selected ? ' selected' : ''}>${escapeHtml(option.label)}</option>`
                 )
                 .join('')}
           </select>
-          <button class="button secondary" type="submit">Set</button>
           <span class="badge tier-${effective}">${escapeHtml(TIER_LABELS[effective])}</span>
         </div>
-      </form>`;
+      </div>`;
 }
 
 /**
  * What a tool does, phrased for someone deciding whether to permit it.
  *
  * Reads get a plain description rather than the change-oriented wording the
- * confirmation prompt uses, which would read oddly next to a tool that only
- * looks at things.
+ * refusal message uses, which reads oddly next to a tool that only looks.
  */
 function consequenceOfForDisplay(toolName: string): string {
-    return defaultTierFor(toolName) === 'allow' && !toolName.startsWith('draft_') &&
-        ALL_READ_TOOLS.has(toolName)
-        ? 'only reads'
-        : consequenceOf(toolName);
+    return ALL_READ_TOOLS.has(toolName) ? 'only reads' : consequenceOf(toolName);
 }
 
 function renderPolicyGroups(client: UiClient, overrides: Record<string, Tier>): string {
-    return POLICY_SECTIONS.map(
+    const sections = POLICY_SECTIONS.map(
         (section) => `<section class="policy-section">
           <h3>${escapeHtml(section.label)}</h3>
           <p class="card-intro">${escapeHtml(section.description)}</p>
-          ${section.tools.map((tool) => renderToolPolicy(client.clientId, tool, overrides)).join('')}
+          ${section.tools.map((tool) => renderToolPolicy(tool, overrides)).join('')}
         </section>`
     ).join('');
+
+    return `<form method="post" action="/ui/clients/policy">
+        <input type="hidden" name="clientId" value="${escapeHtml(client.clientId)}" />
+        ${sections}
+        <div class="actions">
+          <button class="button primary" type="submit">${checkIcon} Save permissions</button>
+          <span class="hint">Only the ones you changed are written.</span>
+        </div>
+      </form>`;
 }
 
 /** "3 minutes ago" style relative time; absolute dates are noise at this scale. */
@@ -1247,6 +1260,7 @@ export function renderUiPage(
               }</span>
               ${unattributed ? '<span class="client-meta">Authorized before Courier recorded which user connected it.</span>' : ''}
               <span class="client-meta">${restricted} of ${ALL_TOOL_NAMES.length} tools restricted${changed ? ` · ${changed} set by you` : ' · all at their defaults'}</span>
+              <span class="client-meta client-id">${escapeHtml(client.clientId)}</span>
             </div>
             <form method="post" action="/ui/clients/revoke">
               <input type="hidden" name="clientId" value="${escapeHtml(client.clientId)}" />
@@ -1257,8 +1271,10 @@ export function renderUiPage(
             <summary><span>Permissions for ${name}</span></summary>
             <p class="card-intro">
               Every tool is offered to every client; this decides what happens when one is
-              called. Changing a permission takes effect immediately and needs no
-              reconnection.
+              called. Changes take effect immediately and need no reconnection.
+              &ldquo;Ask first&rdquo; needs a client that can show a prompt over a persistent
+              session, which this server does not keep &mdash; so it currently refuses the
+              call, exactly like Block.
             </p>
             ${renderPolicyGroups(client, overrides)}
           </details>`;

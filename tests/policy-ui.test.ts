@@ -17,34 +17,51 @@ describe('per-client permissions in the settings UI', () => {
         const html = render();
 
         for (const tool of tools) {
-            expect(html, tool.name).toContain(`value="${tool.name}"`);
+            expect(html, tool.name).toContain(`name="tier.${tool.name}"`);
         }
     });
 
-    it('posts one tool at a time', () => {
-        // One form per tool, not one big one. Posting a whole table would
-        // overwrite a change made in another tab with whatever this page
-        // happened to be showing, and permissions are exactly where a lost
-        // write matters.
+    /**
+     * One form per client, not per tool. Changing five permissions used to be
+     * five page loads. The reason for the per-tool form -- not clobbering an
+     * edit made elsewhere -- is served by sending what the page was rendered
+     * with alongside each control, so the server can skip untouched rows.
+     */
+    it('saves the whole client in one submission', () => {
         const html = render();
         const forms = html.match(/action="\/ui\/clients\/policy"/g) ?? [];
 
-        expect(forms.length).toBe(
-            TOOL_GROUPS.reduce((total, group) => total + group.tools.length, 0) +
-                ALWAYS_AVAILABLE_TOOLS.length
-        );
+        expect(forms.length).toBe(1);
+        expect(html).toContain('Save permissions');
+        expect(html).toContain('Only the ones you changed are written');
     });
 
-    it('carries the client id on every control', () => {
+    it('sends the rendered value alongside each control, so untouched rows can be skipped', () => {
+        const html = render({ policy: { send_email: 'allow' } });
+
+        expect(html).toContain('name="was.send_email" value="allow"');
+        expect(html).toContain('name="was.search_emails" value=""');
+    });
+
+    it('carries the client id once for the whole form', () => {
         const html = render({ clientId: 'abc123' });
         expect(html).toContain('name="clientId" value="abc123"');
+    });
+
+    /**
+     * Two clients can share a name -- "Courier CLI" twice is the case that
+     * prompted this -- and permissions are per client, so a list you cannot
+     * disambiguate is a list you cannot safely act on.
+     */
+    it('shows the client id, since names are not unique', () => {
+        expect(render({ clientId: 'abc123' })).toContain('abc123');
     });
 
     it('offers all three tiers plus a way back to the default', () => {
         const html = render();
 
         expect(html).toContain('>Allow<');
-        expect(html).toContain('>Ask first<');
+        expect(html).toMatch(/>Ask first \(/);
         expect(html).toContain('>Block<');
         expect(html).toMatch(/Default \((Allow|Ask first|Block)\)/);
     });
@@ -61,17 +78,31 @@ describe('per-client permissions in the settings UI', () => {
         expect(html).toContain('tier-deny');
     });
 
-    it('preselects a tier the user has set', () => {
-        const html = render({ policy: { send_email: 'allow' } });
+    const rowFor = (html: string, tool: string) =>
+        new RegExp(`name="tier\\.${tool}"[\\s\\S]*?</select>`).exec(html)?.[0] ?? '';
 
-        // The send_email form should have Allow selected rather than Default.
-        const form = /<form class="tool-policy"[\s\S]*?value="send_email"[\s\S]*?<\/form>/.exec(html)?.[0] ?? '';
-        expect(form).toContain('<option value="allow" selected>');
+    it('preselects a tier the user has set', () => {
+        expect(rowFor(render({ policy: { send_email: 'allow' } }), 'send_email')).toContain(
+            '<option value="allow" selected>'
+        );
     });
 
     it('preselects the default when the user has set nothing', () => {
-        const form = /<form class="tool-policy"[\s\S]*?value="send_email"[\s\S]*?<\/form>/.exec(render())?.[0] ?? '';
-        expect(form).toContain('<option value="" selected>');
+        expect(rowFor(render(), 'send_email')).toContain('<option value="" selected>');
+    });
+
+    /**
+     * "Ask first" cannot reach anyone on this transport -- elicitation needs a
+     * session and this server builds a fresh one per request. Offering it under
+     * a name that promises a prompt would be a setting that silently means
+     * something else.
+     */
+    it('says plainly that Ask first cannot work here', () => {
+        const html = render();
+
+        expect(html).toMatch(/Ask first \(unavailable here/);
+        expect(html).toMatch(/acts as Block/);
+        expect(html).toMatch(/persistent\s+session/);
     });
 
     it('says how many tools are restricted, and how many the user chose', () => {

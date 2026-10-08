@@ -15,6 +15,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { spawn } from 'node:child_process';
+import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import { auth, type OAuthClientProvider, type OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js';
 import type {
@@ -49,6 +50,28 @@ const REGISTERED_REDIRECT = 'http://127.0.0.1/callback';
  */
 export function oobRedirectFor(serverUrl: string): string {
     return new URL('/auth/oob', serverUrl).href;
+}
+
+/**
+ * What this installation calls itself in Courier's settings.
+ *
+ * Every CLI used to register as plain "Courier CLI", so two of them on one
+ * machine were indistinguishable in the list -- which stopped being cosmetic
+ * the moment permissions became per client: you cannot grant a tool to the
+ * right one if you cannot tell which is which.
+ *
+ * COURIER_CLIENT_NAME is the deliberate answer. Failing that, the credential
+ * file's directory names it, since a consumer that wants its own identity
+ * already has to point COURIER_CLI_FILE somewhere of its own -- so the two
+ * decisions are the same decision, and the name comes out right without anyone
+ * configuring it twice.
+ */
+export function clientName(credentialsPath: string): string {
+    const explicit = process.env.COURIER_CLIENT_NAME?.trim();
+    if (explicit) return `Courier CLI (${explicit})`;
+
+    const owner = basename(dirname(credentialsPath));
+    return owner && owner !== 'courier' ? `Courier CLI (${owner})` : 'Courier CLI';
 }
 
 /** How long to wait for a human to finish signing in. */
@@ -111,7 +134,7 @@ export class CliOAuthProvider implements OAuthClientProvider {
 
     get clientMetadata(): OAuthClientMetadata {
         return {
-            client_name: 'Courier CLI',
+            client_name: clientName(this.store.path),
             redirect_uris: registeredRedirects(this.options.serverUrl),
             grant_types: ['authorization_code', 'refresh_token'],
             response_types: ['code'],
