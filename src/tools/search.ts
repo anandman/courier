@@ -23,9 +23,20 @@ import type { Email, EmailFilter, EmailSummary } from 'jmap-courier';
 export const searchEmailsSchema = z.object({
     mailbox: z.string().optional().describe('Mailbox to search in. Omit to search all mail EXCEPT Junk and Trash, which is usually what you want. Pass "Inbox" when the question is specifically about the inbox ("do I have new mail?", "what is my latest unread message?"), since mail filed into other folders would otherwise be included. Pass "Junk" or "Trash" explicitly to search those — they are never searched by default. The standard names ("Inbox", "Sent", "Drafts", "Archive", "Junk", "Trash") always find the right folder whatever the provider calls it — "Junk" finds a folder named "Spam". Any other folder is matched by name, or by full path ("migrated/Junk") when the name is ambiguous.'),
     query: z.string().optional().describe('Full-text search query (use sparingly; can expand results).'),
-    from: z.string().optional().describe('Filter by sender email or name'),
-    to: z.string().optional().describe('Filter by recipient email or name'),
-    subject: z.string().optional().describe('Filter by subject text'),
+    from: z
+        .string()
+        .optional()
+        .describe(
+            'Filter by sender. Matches WHOLE WORDS, not substrings: "guidepoint" finds guidepoint.com but NOT guidepointglobal.com, because the provider tokenises on punctuation. Pass the full domain or address when you mean one specific sender, and search each variant separately when a company uses several.'
+        ),
+    to: z
+        .string()
+        .optional()
+        .describe('Filter by recipient. Matches whole words, not substrings -- see `from`.'),
+    subject: z
+        .string()
+        .optional()
+        .describe('Filter by subject. Matches whole words, not substrings -- see `from`.'),
     after: z.string().optional().describe('Only emails after this date (ISO 8601 format, e.g., "2024-01-01")'),
     before: z.string().optional().describe('Only emails before this date (ISO 8601 format)'),
     hasAttachment: z.boolean().optional().describe('Filter by attachment presence'),

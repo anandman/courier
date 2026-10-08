@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { AccountManager, type ExtendedMultiAccountConfig } from '../src/account-manager.js';
 import { runWithRequestContext } from '../src/request-context.js';
-import { searchEmails } from '../src/tools/search.js';
+import { searchEmails, searchEmailsSchema } from '../src/tools/search.js';
 
 const config: ExtendedMultiAccountConfig = {
     accounts: [
@@ -101,5 +101,29 @@ describe('search_emails default scope', () => {
 
         // An empty inMailboxOtherThan array is a filter JMAP would reject.
         expect(capturedFilter?.inMailboxOtherThan).toBeUndefined();
+    });
+});
+
+describe('what the filters say they do', () => {
+    /**
+     * The provider tokenises these filters on punctuation, so they match whole
+     * words rather than substrings. Described as "Filter by sender email or
+     * name", a consumer reasonably read it as a substring match, searched for
+     * a company by a prefix of its domain, got zero results and reported to its
+     * user that no mail had arrived. Four messages had.
+     *
+     * The behaviour is the provider's and is defensible. The description was
+     * ours and was not.
+     */
+    it('warns that sender matching is by whole word', () => {
+        const description = searchEmailsSchema.shape.from.description ?? '';
+
+        expect(description).toMatch(/WHOLE WORDS/);
+        expect(description).toMatch(/NOT guidepointglobal/);
+    });
+
+    it('says the same for recipient and subject', () => {
+        expect(searchEmailsSchema.shape.to.description ?? '').toMatch(/whole words/);
+        expect(searchEmailsSchema.shape.subject.description ?? '').toMatch(/whole words/);
     });
 });
