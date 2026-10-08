@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { getAccountManager } from '../account-manager.js';
 import { getClient } from 'jmap-courier';
-import type { Email, EmailFilter, EmailSummary } from 'jmap-courier';
+import type { Email, EmailFilterExpression, EmailSummary } from 'jmap-courier';
 
 // Tool schemas
 /**
@@ -20,19 +20,36 @@ import type { Email, EmailFilter, EmailSummary } from 'jmap-courier';
  * number and would reach the JMAP query as a position. A non-numeric string is
  * already rejected by coercion itself, so that case needs nothing extra.
  */
+/**
+ * A filter that takes one value or several.
+ *
+ * Several means OR. Every such parameter used to take exactly one value, so
+ * "mail from any of these ten senders" was ten searches -- a consumer measured
+ * its whole 26.8s full fetch as eleven paged queries that one OR collapses into
+ * two. JMAP has supported the combination since RFC 8620; nothing exposed it.
+ */
+const oneOrMore = z.union([z.string(), z.array(z.string()).min(1)]).optional();
+
 export const searchEmailsSchema = z.object({
-    mailbox: z.string().optional().describe('Mailbox to search in. Omit to search all mail EXCEPT Junk and Trash, which is usually what you want. Pass "Inbox" when the question is specifically about the inbox ("do I have new mail?", "what is my latest unread message?"), since mail filed into other folders would otherwise be included. Pass "Junk" or "Trash" explicitly to search those — they are never searched by default. The standard names ("Inbox", "Sent", "Drafts", "Archive", "Junk", "Trash") always find the right folder whatever the provider calls it — "Junk" finds a folder named "Spam". Any other folder is matched by name, or by full path ("migrated/Junk") when the name is ambiguous.'),
+    mailbox: oneOrMore.describe('Mailbox to search in. Accepts a list to search several at once. Omit to search all mail EXCEPT Junk and Trash, which is usually what you want. Pass "Inbox" when the question is specifically about the inbox ("do I have new mail?", "what is my latest unread message?"), since mail filed into other folders would otherwise be included. Pass "Junk" or "Trash" explicitly to search those — they are never searched by default. The standard names ("Inbox", "Sent", "Drafts", "Archive", "Junk", "Trash") always find the right folder whatever the provider calls it — "Junk" finds a folder named "Spam". Any other folder is matched by name, or by full path ("migrated/Junk") when the name is ambiguous.'),
     query: z.string().optional().describe('Full-text search query (use sparingly; can expand results).'),
-    from: z
-        .string()
-        .optional()
+    from: oneOrMore
         .describe(
-            'Filter by sender. Matches WHOLE WORDS, not substrings: "guidepoint" finds guidepoint.com but NOT guidepointglobal.com, because the provider tokenises on punctuation. Pass the full domain or address when you mean one specific sender, and search each variant separately when a company uses several.'
+            'Filter by sender. PASS A LIST to match any of several senders in ONE call instead of one search each -- "from any of these" is the single biggest saving available here. Matches WHOLE WORDS, not substrings: "guidepoint" finds guidepoint.com but NOT guidepointglobal.com, because the provider tokenises on punctuation. Pass the full domain or address when you mean one specific sender, and list every variant when a company uses several.'
         ),
-    to: z
-        .string()
-        .optional()
-        .describe('Filter by recipient. Matches whole words, not substrings -- see `from`.'),
+    to: oneOrMore.describe(
+        'Filter by recipient. Accepts a list, matching any of them. Matches whole words, not substrings -- see `from`.'
+    ),
+    cc: oneOrMore.describe('Filter by CC recipient. Accepts a list, matching any of them.'),
+    participant: oneOrMore.describe(
+        'Filter by anyone involved, whether they sent it or appear in To, Cc or Bcc. Use this for "did I correspond with X" rather than guessing which field they were in. Accepts a list.'
+    ),
+    hasKeyword: oneOrMore.describe(
+        'Only messages carrying this keyword/tag (e.g. a label set by tag_emails). Accepts a list, matching any of them.'
+    ),
+    lacksKeyword: oneOrMore.describe(
+        'Only messages NOT carrying this keyword/tag. Accepts a list; a message carrying any of them is excluded.'
+    ),
     subject: z
         .string()
         .optional()
@@ -70,6 +87,23 @@ export function toEmailSummary(email: Email): EmailSummary {
     };
 }
 
+/** One value or many, always as a list. */
+function asList(value: string | string[]): string[] {
+    return Array.isArray(value) ? value : [value];
+}
+
+/**
+ * OR over several conditions, or the condition itself when there is only one.
+ *
+ * Unwrapping the single case keeps the filter JMAP sees identical to what it
+ * saw before this existed, so a query that was already correct cannot change
+ * shape -- and the server's query planner is handed nothing to see through.
+ */
+function anyOf(conditions: EmailFilterExpression[]): EmailFilterExpression {
+    if (conditions.length === 1) return conditions[0];
+    return { operator: 'OR', conditions };
+}
+
 // Tool handlers
 export async function searchEmails(
     params: z.infer<typeof searchEmailsSchema>
@@ -95,16 +129,30 @@ export async function searchEmails(
     const client = getClient(account);
 
     // Build filter
-    const filter: EmailFilter = {};
 
-    // Handle mailbox filter
+    // Every parameter below contributes one condition; they are ANDed together,
+    // and a parameter given several values becomes an OR among those values.
+    // Built as an expression tree rather than a flat object because JMAP has no
+    // other way to say "any of these senders", which is the whole point.
+    const conditions: EmailFilterExpression[] = [];
+
     if (params.mailbox) {
-        const mailbox = await client.resolveMailbox(params.mailbox);
-        if (mailbox) {
-            filter.inMailbox = mailbox.id;
-        } else {
-            throw new Error(`Mailbox not found: ${params.mailbox}`);
+        const names = asList(params.mailbox);
+        const mailboxes = await Promise.all(names.map((name) => client.resolveMailbox(name)));
+        const missing = names.filter((_, index) => mailboxes[index] === null);
+        if (missing.length > 0) {
+            // Named and refused rather than quietly skipped. A search that
+            // silently dropped one of three mailboxes would return a smaller
+            // answer that looks complete.
+            throw new Error(`Mailbox not found: ${missing.join(', ')}`);
         }
+        conditions.push(
+            anyOf(
+                mailboxes
+                    .filter((mailbox): mailbox is NonNullable<typeof mailbox> => mailbox !== null)
+                    .map((mailbox) => ({ inMailbox: mailbox.id }))
+            )
+        );
     } else {
         // An unscoped JMAP query spans every mailbox, so "my latest unread
         // message" would happily return spam. Exclude Junk and Trash the way
@@ -116,36 +164,70 @@ export async function searchEmails(
             .filter((mailbox): mailbox is NonNullable<typeof mailbox> => mailbox !== null)
             .map((mailbox) => mailbox.id);
         if (excluded.length > 0) {
-            filter.inMailboxOtherThan = excluded;
+            conditions.push({ inMailboxOtherThan: excluded });
         }
     }
 
     if (params.query) {
-        filter.text = params.query;
+        conditions.push({ text: params.query });
     }
-    if (params.from) {
-        filter.from = params.from;
+    for (const [field, value] of [
+        ['from', params.from],
+        ['to', params.to],
+        ['cc', params.cc],
+    ] as const) {
+        if (value) conditions.push(anyOf(asList(value).map((entry) => ({ [field]: entry }))));
     }
-    if (params.to) {
-        filter.to = params.to;
+
+    // Anyone involved, whichever field they appeared in. JMAP has no such
+    // filter, so it is an OR across the four that exist -- which is exactly the
+    // kind of thing a caller should not have to assemble by hand, and the
+    // reason "did I correspond with X" was previously three searches.
+    if (params.participant) {
+        conditions.push(
+            anyOf(
+                asList(params.participant).flatMap((entry) => [
+                    { from: entry },
+                    { to: entry },
+                    { cc: entry },
+                    { bcc: entry },
+                ])
+            )
+        );
     }
+
     if (params.subject) {
-        filter.subject = params.subject;
+        conditions.push({ subject: params.subject });
     }
     if (params.after) {
-        filter.after = new Date(params.after).toISOString();
+        conditions.push({ after: new Date(params.after).toISOString() });
     }
     if (params.before) {
-        filter.before = new Date(params.before).toISOString();
+        conditions.push({ before: new Date(params.before).toISOString() });
     }
     if (params.hasAttachment !== undefined) {
-        filter.hasAttachment = params.hasAttachment;
+        conditions.push({ hasAttachment: params.hasAttachment });
     }
     if (params.isUnread === true) {
-        filter.notKeyword = '$seen';
+        conditions.push({ notKeyword: '$seen' });
     } else if (params.isUnread === false) {
-        filter.hasKeyword = '$seen';
+        conditions.push({ hasKeyword: '$seen' });
     }
+    if (params.hasKeyword) {
+        conditions.push(anyOf(asList(params.hasKeyword).map((keyword) => ({ hasKeyword: keyword }))));
+    }
+    if (params.lacksKeyword) {
+        // NOT over an OR: carrying ANY of them excludes the message, which is
+        // what "lacks all of these" means and what a caller listing several
+        // unwanted tags intends.
+        conditions.push({
+            operator: 'NOT',
+            conditions: [anyOf(asList(params.lacksKeyword).map((keyword) => ({ hasKeyword: keyword })))],
+        });
+    }
+
+    const filter: EmailFilterExpression | undefined =
+        conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { operator: 'AND', conditions };
 
     // The cap stays: these results go into a model's context window, so an
     // unbounded page is the harm it exists to prevent. What changes is that a
@@ -155,7 +237,7 @@ export async function searchEmails(
 
     // Query for email IDs
     const page = await client.queryEmailsPage(
-        Object.keys(filter).length > 0 ? filter : undefined,
+        filter,
         [{ property: 'receivedAt', isAscending: false }],
         { limit, position }
     );

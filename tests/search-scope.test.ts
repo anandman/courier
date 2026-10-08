@@ -25,6 +25,28 @@ const MAILBOXES: Record<string, { id: string; role: string | null }> = {
 /** Captures the filter handed to JMAP so we can assert on the query, not the results. */
 let capturedFilter: Record<string, unknown> | undefined;
 
+/**
+ * The leaf conditions of a filter, whatever shape it arrived in.
+ *
+ * Filters became expression trees when the search parameters learned to take
+ * lists -- "from any of these" has no flat representation in JMAP. These tests
+ * are about what is being asked for, not how it is nested, so they read through
+ * the operators rather than asserting a structure that is free to change.
+ */
+function leaves(filter: unknown): Record<string, unknown>[] {
+    if (!filter || typeof filter !== 'object') return [];
+    const node = filter as { operator?: string; conditions?: unknown[] };
+    if (node.operator && Array.isArray(node.conditions)) {
+        return node.conditions.flatMap(leaves);
+    }
+    return [filter as Record<string, unknown>];
+}
+
+/** The value of one filter field, wherever in the tree it was set. */
+function conditionFor(field: string): unknown {
+    return leaves(capturedFilter).find((leaf) => leaf[field] !== undefined)?.[field];
+}
+
 const client = {
     getMailboxByRole: vi.fn(async (role: string) => MAILBOXES[role] ?? null),
     resolveMailbox: vi.fn(async (idOrName: string) => MAILBOXES[idOrName.toLowerCase()] ?? null),
@@ -65,8 +87,8 @@ describe('search_emails default scope', () => {
 
         // The whole point: an unscoped JMAP query otherwise spans every mailbox,
         // so "my latest unread message" could return spam.
-        expect(capturedFilter?.inMailboxOtherThan).toEqual(['mbx-junk', 'mbx-trash']);
-        expect(capturedFilter?.inMailbox).toBeUndefined();
+        expect(conditionFor('inMailboxOtherThan')).toEqual(['mbx-junk', 'mbx-trash']);
+        expect(conditionFor('inMailbox')).toBeUndefined();
     });
 
     it('still searches Archive, Sent and custom folders by default', async () => {
@@ -74,15 +96,15 @@ describe('search_emails default scope', () => {
 
         // Exclusion must be a denylist, not a narrowing to Inbox -- otherwise
         // "find that email from Bob" would stop finding archived mail.
-        expect(capturedFilter?.inMailbox).toBeUndefined();
-        expect(capturedFilter?.inMailboxOtherThan).not.toContain('mbx-inbox');
+        expect(conditionFor('inMailbox')).toBeUndefined();
+        expect(conditionFor('inMailboxOtherThan')).not.toContain('mbx-inbox');
     });
 
     it('searches only the named mailbox when one is given', async () => {
         await search({ mailbox: 'Inbox', limit: 20 });
 
-        expect(capturedFilter?.inMailbox).toBe('mbx-inbox');
-        expect(capturedFilter?.inMailboxOtherThan).toBeUndefined();
+        expect(conditionFor('inMailbox')).toBe('mbx-inbox');
+        expect(conditionFor('inMailboxOtherThan')).toBeUndefined();
     });
 
     it('searches Junk when Junk is asked for explicitly', async () => {
@@ -90,8 +112,8 @@ describe('search_emails default scope', () => {
 
         // Naming the mailbox is the opt-in; the default exclusion must not
         // survive and produce a query that can never match anything.
-        expect(capturedFilter?.inMailbox).toBe('mbx-junk');
-        expect(capturedFilter?.inMailboxOtherThan).toBeUndefined();
+        expect(conditionFor('inMailbox')).toBe('mbx-junk');
+        expect(conditionFor('inMailboxOtherThan')).toBeUndefined();
     });
 
     it('omits the exclusion when the account has no Junk or Trash mailbox', async () => {
@@ -100,7 +122,7 @@ describe('search_emails default scope', () => {
         await search({ limit: 20 });
 
         // An empty inMailboxOtherThan array is a filter JMAP would reject.
-        expect(capturedFilter?.inMailboxOtherThan).toBeUndefined();
+        expect(conditionFor('inMailboxOtherThan')).toBeUndefined();
     });
 });
 
@@ -125,5 +147,104 @@ describe('what the filters say they do', () => {
     it('says the same for recipient and subject', () => {
         expect(searchEmailsSchema.shape.to.description ?? '').toMatch(/whole words/);
         expect(searchEmailsSchema.shape.subject.description ?? '').toMatch(/whole words/);
+    });
+});
+
+describe('matching any of several values', () => {
+    beforeEach(() => {
+        capturedFilter = undefined;
+        client.getMailboxByRole.mockImplementation(async (role: string) => MAILBOXES[role] ?? null);
+    });
+
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
+
+    /** Every leaf condition naming a field, in tree order. */
+    const valuesFor = (field: string) =>
+        leaves(capturedFilter)
+            .filter((leaf) => leaf[field] !== undefined)
+            .map((leaf) => leaf[field]);
+
+    /**
+     * The saving this exists for. A consumer issued ELEVEN separate paged
+     * searches per full fetch, one per sender domain, because "from any of
+     * these" could not be expressed -- and measured that as the whole of its
+     * 26.8s. JMAP has supported the combination since RFC 8620; nothing here
+     * exposed it.
+     */
+    it('turns a list of senders into one query', async () => {
+        await search({ from: ['a.example', 'b.example', 'c.example'], limit: 20 });
+
+        expect(valuesFor('from')).toEqual(['a.example', 'b.example', 'c.example']);
+        expect(JSON.stringify(capturedFilter)).toContain('"OR"');
+    });
+
+    /**
+     * A single value must produce exactly what it produced before this existed,
+     * so a query that was already correct cannot change shape -- and the
+     * provider's planner is handed nothing to see through.
+     */
+    it('does not wrap a single value in an operator', async () => {
+        await search({ from: 'solo.example', limit: 20 });
+
+        const text = JSON.stringify(capturedFilter);
+        expect(text).toContain('solo.example');
+        expect(text).not.toContain('"OR"');
+    });
+
+    it('accepts a list for recipients and CC too', async () => {
+        await search({ to: ['x@example.com', 'y@example.com'], cc: ['z@example.com'], limit: 20 });
+
+        expect(valuesFor('to')).toEqual(['x@example.com', 'y@example.com']);
+        expect(valuesFor('cc')).toEqual(['z@example.com']);
+    });
+
+    /**
+     * "Did I correspond with X" should not require knowing which field they
+     * appeared in. JMAP has no such filter, so it is an OR across the four that
+     * exist -- previously three or four separate searches.
+     */
+    it('matches a participant in any address field', async () => {
+        await search({ participant: 'dan@example.com', limit: 20 });
+
+        expect(valuesFor('from')).toEqual(['dan@example.com']);
+        expect(valuesFor('to')).toEqual(['dan@example.com']);
+        expect(valuesFor('cc')).toEqual(['dan@example.com']);
+        expect(valuesFor('bcc')).toEqual(['dan@example.com']);
+    });
+
+    it('searches several mailboxes at once', async () => {
+        await search({ mailbox: ['Inbox', 'Junk'], limit: 20 });
+
+        expect(valuesFor('inMailbox')).toEqual(['mbx-inbox', 'mbx-junk']);
+        expect(conditionFor('inMailboxOtherThan')).toBeUndefined();
+    });
+
+    /**
+     * Named and refused rather than quietly dropped. A search that silently
+     * skipped one of three mailboxes would return a smaller answer that looks
+     * complete -- the failure this project keeps producing.
+     */
+    it('refuses the whole search when one mailbox does not exist', async () => {
+        await expect(search({ mailbox: ['Inbox', 'Nonsense'], limit: 20 })).rejects.toThrow(
+            /Mailbox not found: Nonsense/
+        );
+    });
+
+    it('filters on keywords, and on their absence', async () => {
+        await search({ hasKeyword: ['invoice', 'paid'], lacksKeyword: 'archived', limit: 20 });
+
+        expect(valuesFor('hasKeyword')).toEqual(['invoice', 'paid', 'archived']);
+        // The absent one sits under a NOT; the present ones do not.
+        expect(JSON.stringify(capturedFilter)).toContain('"NOT"');
+    });
+
+    it('still ANDs unrelated parameters together', async () => {
+        await search({ from: ['a.example', 'b.example'], subject: 'invoice', isUnread: true, limit: 20 });
+
+        expect(valuesFor('subject')).toEqual(['invoice']);
+        expect(valuesFor('notKeyword')).toEqual(['$seen']);
+        expect(JSON.stringify(capturedFilter)).toContain('"AND"');
     });
 });
