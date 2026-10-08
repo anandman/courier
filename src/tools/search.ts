@@ -111,6 +111,15 @@ export function toEmailSummary(email: Email): EmailSummary {
         hasAttachment: email.hasAttachment,
         isRead: email.keywords?.['$seen'] === true,
         isFlagged: email.keywords?.['$flagged'] === true,
+        // Present only on bulk mail, which is exactly what makes it useful:
+        // its presence identifies a newsletter without reading the message,
+        // and its absence means deletion is the only lever available.
+        //
+        // The URLs are reported, never followed. Unsubscribing is irreversible,
+        // silently changes what arrives for months, and is a decision for the
+        // person whose mailbox it is -- so Courier surfaces the option and
+        // offers no tool that acts on it.
+        unsubscribe: email['header:List-Unsubscribe:asURLs'] ?? null,
     };
 }
 

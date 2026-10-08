@@ -171,6 +171,13 @@ export interface BatchEmail {
     hasAttachment: boolean;
     attachments: Array<{ blobId: string | null; name: string | null; type: string; size: number }>;
     keywords: string[];
+    /**
+     * Unsubscribe targets from List-Unsubscribe, or null when this is not bulk
+     * mail. Reported, never followed: unsubscribing is irreversible, silently
+     * changes what arrives for months, and belongs to the person whose mailbox
+     * it is. Courier offers no tool that acts on these.
+     */
+    unsubscribe: string[] | null;
     body?: string;
     htmlBody?: string | null;
     /** True when `body` was cut short. The full length is in `bodyChars`. */
@@ -240,6 +247,7 @@ export async function getEmails(
                 size: attachment.size,
             })),
             keywords: Object.keys(email.keywords ?? {}),
+            unsubscribe: email['header:List-Unsubscribe:asURLs'] ?? null,
         };
 
         if (!wantBodies) return base;
