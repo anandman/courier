@@ -260,3 +260,116 @@ export async function draftForward(
         account: manager.getCurrentAccountName(),
     };
 }
+
+export const updateDraftSchema = z.object({
+    emailId: z.string().describe('The draft to revise (use the emailId a draft tool returned)'),
+    body: z.string().optional().describe('Replacement body. Omit to keep the current one.'),
+    subject: z.string().optional().describe('Replacement subject. Omit to keep the current one.'),
+    to: recipients.optional().describe('Replacement recipient(s). Omit to keep the current ones.'),
+    ...common,
+});
+
+export interface UpdateDraftResult extends DraftResult {
+    /**
+     * The id this draft had before. It no longer addresses anything editable.
+     *
+     * Returned because a caller holding the old id would otherwise keep using
+     * it and silently operate on a message sitting in Trash -- the same shape
+     * as every other quietly-wrong answer this server has produced.
+     */
+    previousEmailId: string;
+    previousVersion: 'trash';
+}
+
+/**
+ * Revises a draft in place, as far as JMAP allows.
+ *
+ * It does not allow much: RFC 8621 makes an Email immutable except for
+ * `keywords` and `mailboxIds`, so there is no edit operation for a body or a
+ * subject anywhere in the protocol. Every mail client that offers one does what
+ * this does -- write a new message and retire the old -- including Fastmail's
+ * own.
+ *
+ * Which is exactly why this is a tool rather than a note in the documentation.
+ * A client doing it by hand has to reconstruct the parts it did not mean to
+ * change, and the part it most reliably gets wrong is threading: In-Reply-To
+ * and References are invisible in a Drafts list and wrong in every client that
+ * threads, so a "revised" reply quietly becomes a new conversation. Inheriting
+ * them here is the whole point. Identity, cc, bcc and reply-to are inherited
+ * for the same reason.
+ *
+ * The old version goes to Trash rather than being destroyed. Destroying is what
+ * mail clients do and it leaves no litter, but it cannot tell a draft the agent
+ * wrote ten seconds ago from one a person spent ten minutes on -- and this
+ * server's rule is that a reversible mistake may run freely while an
+ * irreversible one must be granted. Trash keeps that true, and keeps this tool
+ * in the same tier as the drafting tools it belongs with.
+ */
+export async function updateDraft(
+    params: z.infer<typeof updateDraftSchema>
+): Promise<UpdateDraftResult> {
+    const { client, manager } = await clientFor();
+    const original = await client.getEmailWithBody(params.emailId);
+
+    // Refused rather than attempted. A received or sent message cannot be
+    // edited by anyone -- the protocol forbids it -- and the failure a caller
+    // would otherwise get is about mailboxes, which explains nothing.
+    const drafts = await client.getMailboxByRole('drafts');
+    const isDraft =
+        original.keywords?.$draft === true ||
+        (drafts !== null && original.mailboxIds?.[drafts.id] === true);
+    if (!isDraft) {
+        throw new Error(
+            `${params.emailId} is not a draft, and a message that has been sent or received cannot be edited -- JMAP makes it immutable. Use draft_reply or draft_forward to write a new message about it instead.`
+        );
+    }
+
+    const to = params.to !== undefined ? normalizeEmails(params.to) : addresses(original.to);
+    if (to.length === 0) {
+        throw new Error('A draft needs at least one recipient; pass `to`.');
+    }
+
+    const cc = params.cc !== undefined ? normalizeEmails(params.cc) : addresses(original.cc);
+    const bcc = params.bcc !== undefined ? normalizeEmails(params.bcc) : addresses(original.bcc);
+    const subject = params.subject ?? original.subject ?? '';
+    const body = params.body ?? textOf(original);
+    const from = params.from ?? addresses(original.from)[0];
+
+    // Threading is inherited verbatim. These headers are what make a revised
+    // reply still a reply, and nothing in the arguments can set them: a caller
+    // revising a draft is not changing which conversation it belongs to.
+    const inReplyTo = original.inReplyTo?.[0];
+    const references = original.references ?? undefined;
+
+    const created = await client.createDraft({
+        from,
+        to,
+        subject,
+        textBody: body,
+        cc: cc.length ? cc : undefined,
+        bcc: bcc.length ? bcc : undefined,
+        inReplyTo,
+        references: references?.length ? references : undefined,
+    });
+
+    // Retired only after the replacement exists. The reverse order risks a
+    // window with no draft at all, and a failure here leaves two drafts --
+    // untidy, but nothing is lost, which is the right way round.
+    await client.deleteEmails([params.emailId]);
+
+    return {
+        emailId: created.emailId,
+        previousEmailId: params.emailId,
+        previousVersion: 'trash',
+        sendable: created.sendable,
+        kind: inReplyTo ? 'reply' : 'new',
+        from: created.from,
+        to,
+        subject,
+        threaded: Boolean(inReplyTo),
+        message:
+            `Draft revised. Its id is now ${created.emailId}; ${params.emailId} is in Trash and should not be used again. Nothing has been sent.` +
+            (created.sendable ? '' : ` No identity authorises "${created.from}", so sending this draft would be refused.`),
+        account: manager.getCurrentAccountName(),
+    };
+}

@@ -131,6 +131,7 @@ export const REVERSIBLE_WRITE_TOOLS: ReadonlySet<string> = new Set([
     'draft_email',
     'draft_reply',
     'draft_forward',
+    'update_draft',
     'delete_emails',
     'move_emails',
     'mark_emails',

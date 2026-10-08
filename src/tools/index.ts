@@ -118,6 +118,8 @@ import {
     draftForwardSchema,
     draftReply,
     draftReplySchema,
+    updateDraft,
+    updateDraftSchema,
 } from './draft.js';
 
 // Tool definition type
@@ -301,6 +303,13 @@ const baseTools: ToolDefinition[] = [
         handler: (params) => draftForward(draftForwardSchema.parse(params)),
     },
     {
+        name: 'update_draft',
+        description:
+            'Revise a draft already in Drafts: change its body, subject or recipients. Anything you omit is kept, including the threading that makes a reply a reply. JMAP cannot edit a message in place, so this writes a new draft and moves the old one to Trash -- THE ID CHANGES, and the result gives you the new one. Nothing is transmitted.',
+        inputSchema: updateDraftSchema,
+        handler: (params) => updateDraft(updateDraftSchema.parse(params)),
+    },
+    {
         name: 'send_email',
         description: 'Compose and send a new email (no email bodies read).',
         inputSchema: sendEmailSchema,
@@ -474,6 +483,7 @@ export {
     draftEmail,
     draftReply,
     draftForward,
+    updateDraft,
     readThread,
     getAttachment,
     createMailbox,
