@@ -11,6 +11,8 @@
 import { CliError, EXIT } from './exit.js';
 
 export interface JsonSchemaLike {
+    minimum?: number;
+    maximum?: number;
     $ref?: string;
     definitions?: Record<string, JsonSchemaLike>;
     $defs?: Record<string, JsonSchemaLike>;
@@ -36,6 +38,9 @@ export interface ParamSpec {
     required: boolean;
     enumValues?: unknown[];
     description?: string;
+    /** Bounds the schema advertises, enforced here so a breach is a usage error. */
+    minimum?: number;
+    maximum?: number;
 }
 
 /** `search_emails` and `search-emails` are the same tool; both spellings are accepted. */
@@ -62,6 +67,8 @@ export function describeParameters(schema: JsonSchemaLike | undefined): ParamSpe
             required: required.has(name),
             enumValues: collectEnum(property),
             description: property.description,
+            minimum: typeof property.minimum === 'number' ? property.minimum : undefined,
+            maximum: typeof property.maximum === 'number' ? property.maximum : undefined,
         }))
         .sort((a, b) => {
             if (a.required !== b.required) return a.required ? -1 : 1;
@@ -199,6 +206,23 @@ function coerce(raw: string, spec: ParamSpec): unknown {
         const parsed = Number(raw);
         if (!Number.isFinite(parsed)) {
             throw new CliError(EXIT.USAGE, `${spec.flag} takes a number; got ${JSON.stringify(raw)}.`);
+        }
+        // Bounds the schema declares are checked here rather than left to the
+        // server. The server's refusal is correct but arrives as a validation
+        // dump inside a tool error, which reads as a server fault for what is
+        // plainly a bad argument.
+        if (spec.maximum !== undefined && parsed > spec.maximum) {
+            throw new CliError(
+                EXIT.USAGE,
+                `${spec.flag} takes at most ${spec.maximum}; got ${parsed}.`,
+                spec.name === 'limit' ? 'Page with --position, or use --all to walk the whole set.' : undefined
+            );
+        }
+        if (spec.minimum !== undefined && parsed < spec.minimum) {
+            throw new CliError(
+                EXIT.USAGE,
+                `${spec.flag} takes at least ${spec.minimum}; got ${parsed}.`
+            );
         }
         return parsed;
     }

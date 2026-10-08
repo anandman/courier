@@ -30,10 +30,11 @@ export const DEFAULT_MAX_PAGES = 50;
  * `--all` at 1000 results, which is high enough to look correct on anything
  * small and silently too low on a real mailbox.
  *
- * Used only when the tool's schema does not advertise a `maximum`. Asking for
- * more than the server allows is harmless: Courier caps the value rather than
- * rejecting it, and the walk follows `returned` rather than what it requested,
- * so a server that gives back less simply takes more pages.
+ * Used only when the tool's schema does not advertise a `maximum` -- which
+ * Courier's now does, so this is the fallback for an older server rather than
+ * the normal path. Guessing too high is no longer harmless now that an
+ * over-large limit is refused instead of clamped, which is another reason to
+ * prefer the advertised value whenever there is one.
  */
 export const DEFAULT_ALL_PAGE_SIZE = 100;
 

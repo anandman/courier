@@ -30,6 +30,22 @@ import type { Email, EmailFilterExpression, EmailSummary } from 'jmap-courier';
  */
 const oneOrMore = z.union([z.string(), z.array(z.string()).min(1)]).optional();
 
+/**
+ * Largest page this tool will return.
+ *
+ * Declared in the schema, not only in prose, so a caller can derive it. It used
+ * to live in the description alone and the handler silently clamped anything
+ * larger -- which meant a client asking for 200 received 100 with no indication,
+ * and anything wanting to page optimally had to parse English or guess. The
+ * CLI guesses 100 to this day for exactly that reason.
+ *
+ * Rejecting rather than clamping is the same rule the rest of this server
+ * follows: an answer quietly smaller than the one requested is the failure mode
+ * this project keeps producing. A caller that asks for more is told so and can
+ * page.
+ */
+export const MAX_PAGE_SIZE = 100;
+
 export const searchEmailsSchema = z.object({
     mailbox: oneOrMore.describe('Mailbox to search in. Accepts a list to search several at once. Omit to search all mail EXCEPT Junk and Trash, which is usually what you want. Pass "Inbox" when the question is specifically about the inbox ("do I have new mail?", "what is my latest unread message?"), since mail filed into other folders would otherwise be included. Pass "Junk" or "Trash" explicitly to search those — they are never searched by default. The standard names ("Inbox", "Sent", "Drafts", "Archive", "Junk", "Trash") always find the right folder whatever the provider calls it — "Junk" finds a folder named "Spam". Any other folder is matched by name, or by full path ("migrated/Junk") when the name is ambiguous.'),
     query: z.string().optional().describe('Full-text search query (use sparingly; can expand results).'),
@@ -58,7 +74,18 @@ export const searchEmailsSchema = z.object({
     before: z.string().optional().describe('Only emails before this date (ISO 8601 format)'),
     hasAttachment: z.boolean().optional().describe('Filter by attachment presence'),
     isUnread: z.boolean().optional().describe('Filter by unread status'),
-    limit: z.coerce.number().finite().optional().default(20).describe('Results per page (default 20, max 100 -- a larger value is capped, not honoured). Lower = fewer tokens.'),
+    limit: z
+        .coerce
+        .number()
+        .finite()
+        .int()
+        .min(1)
+        .max(MAX_PAGE_SIZE)
+        .optional()
+        .default(20)
+        .describe(
+            `Results per page (default 20, max ${MAX_PAGE_SIZE}). Lower = fewer tokens. A larger value is REJECTED rather than capped, so a caller is never silently handed less than it asked for; page with position instead.`
+        ),
     position: z.coerce.number().finite().optional().default(0).describe('Zero-based offset into the matching set, for paging. Combine with the returned total/hasMore to walk a result set larger than one page; keep the other filters identical between calls.'),
 });
 
@@ -232,7 +259,8 @@ export async function searchEmails(
     // The cap stays: these results go into a model's context window, so an
     // unbounded page is the harm it exists to prevent. What changes is that a
     // truncated set now says so, via total/hasMore, instead of looking complete.
-    const limit = Math.min(params.limit || 20, 100);
+    // Already bounded by the schema; this only applies the default.
+    const limit = params.limit || 20;
     const position = Math.max(0, Math.trunc(params.position || 0));
 
     // Query for email IDs

@@ -260,3 +260,40 @@ describe('every real tool schema yields usable flags', () => {
         expect(uninterpretable).toEqual([]);
     });
 });
+
+describe('bounds the schema advertises', () => {
+    const bounded = describeParameters({
+        type: 'object',
+        properties: { limit: { type: 'number', minimum: 1, maximum: 100 } },
+    });
+
+    it('reads them off the schema', () => {
+        expect(bounded[0].minimum).toBe(1);
+        expect(bounded[0].maximum).toBe(100);
+    });
+
+    /**
+     * The server refuses an over-large page too, and correctly -- but its
+     * refusal arrives as a validation dump inside a tool error, which reads as
+     * a server fault for what is plainly a bad argument.
+     */
+    it('refuses a value above the maximum as a usage error', () => {
+        try {
+            parseToolArgs(['--limit', '5000'], bounded, 'search_emails');
+            expect.unreachable('should have thrown');
+        } catch (error) {
+            expect((error as CliError).code).toBe(EXIT.USAGE);
+            expect((error as CliError).message).toMatch(/at most 100/);
+            expect((error as CliError).hint).toMatch(/--all/);
+        }
+    });
+
+    it('refuses a value below the minimum', () => {
+        expect(() => parseToolArgs(['--limit', '0'], bounded, 'search_emails')).toThrowError(/at least 1/);
+    });
+
+    it('accepts the bounds themselves', () => {
+        expect(parseToolArgs(['--limit', '100'], bounded, 'search_emails')).toEqual({ limit: 100 });
+        expect(parseToolArgs(['--limit', '1'], bounded, 'search_emails')).toEqual({ limit: 1 });
+    });
+});

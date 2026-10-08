@@ -11,11 +11,14 @@
  * messages, with nothing in the response indicating the other 34 existed.
  */
 
+import { zodToJsonSchema } from 'zod-to-json-schema';
+
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import { AccountManager, type ExtendedMultiAccountConfig } from '../src/account-manager.js';
 import { runWithRequestContext } from '../src/request-context.js';
-import { searchEmails, searchEmailsSchema } from '../src/tools/search.js';
+import { MAX_PAGE_SIZE,
+    searchEmails, searchEmailsSchema } from '../src/tools/search.js';
 
 const config: ExtendedMultiAccountConfig = {
     accounts: [
@@ -176,17 +179,23 @@ describe('limit and position are sanitised', () => {
         vi.clearAllMocks();
     });
 
-    it('caps an over-large limit at 100 instead of honouring it', async () => {
-        await search({ limit: 5000 });
-
-        expect(requested?.limit).toBe(100);
+    /**
+     * This used to clamp an over-large limit to 100 and answer as though that
+     * was what had been asked for. The cap itself is right -- these results go
+     * into a model's context window -- but applying it silently made the
+     * response a quietly smaller answer than the request, which is the failure
+     * this file exists to prevent. It is now declared in the schema and
+     * refused, so a caller learns the bound and can page.
+     */
+    it('refuses an over-large limit rather than quietly shrinking it', async () => {
+        expect(() => searchEmailsSchema.parse({ limit: 5000 })).toThrow();
     });
 
-    it('still reports the true total when the request was capped', async () => {
-        // Capping must not become a second way to hide the size of the set.
-        const result = await search({ limit: 5000 });
+    it('reports the true total at the largest page it will serve', async () => {
+        const result = await search({ limit: MAX_PAGE_SIZE });
 
-        expect(result.returned).toBe(100);
+        expect(requested?.limit).toBe(MAX_PAGE_SIZE);
+        expect(result.returned).toBe(MAX_PAGE_SIZE);
         expect(result.total).toBe(TOTAL_MATCHES);
         expect(result.hasMore).toBe(true);
     });
@@ -240,5 +249,40 @@ describe('numeric inputs survive a client that sends strings', () => {
         // Number("Infinity") is a valid number, so only .finite() stops it
         // reaching the query as a position.
         expect(() => searchEmailsSchema.parse({ position: 'Infinity' })).toThrow();
+    });
+});
+
+describe('the page-size cap is part of the contract', () => {
+    /**
+     * It used to live in the description text while the handler silently
+     * clamped anything larger, so a client asking for 200 received 100 with
+     * nothing to say so -- and anything wanting to page optimally had to parse
+     * English or guess. The CLI guesses 100 to this day for that reason.
+     *
+     * Rejecting rather than clamping follows the same rule as the rest of this
+     * server: an answer quietly smaller than the one asked for is the failure
+     * this project keeps producing.
+     */
+    it('advertises the maximum in the schema, not only in prose', () => {
+        const schema = zodToJsonSchema(searchEmailsSchema) as {
+            properties: { limit: { maximum?: number; minimum?: number } };
+        };
+
+        expect(schema.properties.limit.maximum).toBe(MAX_PAGE_SIZE);
+        expect(schema.properties.limit.minimum).toBe(1);
+    });
+
+    it('refuses a page larger than the cap rather than quietly shrinking it', () => {
+        expect(() => searchEmailsSchema.parse({ limit: MAX_PAGE_SIZE + 1 })).toThrow();
+        expect(searchEmailsSchema.parse({ limit: MAX_PAGE_SIZE }).limit).toBe(MAX_PAGE_SIZE);
+    });
+
+    it('refuses a nonsensical page size', () => {
+        expect(() => searchEmailsSchema.parse({ limit: 0 })).toThrow();
+        expect(() => searchEmailsSchema.parse({ limit: -5 })).toThrow();
+    });
+
+    it('still defaults to a small page', () => {
+        expect(searchEmailsSchema.parse({}).limit).toBe(20);
     });
 });
