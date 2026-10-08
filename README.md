@@ -7,8 +7,17 @@ against Fastmail; works with any JMAP provider.
 ## Quick Install
 
 ```bash
+npm install -g @anandman/courier
+```
+
+That provides `courier` (the CLI, and `courier mcp` to run the server) and
+`courier-mcp` (the server directly, for a client config that spawns it).
+
+From source:
+
+```bash
 git clone https://github.com/anandman/courier.git
-cd email-courier
+cd courier
 npm install
 npm run build
 ```
@@ -106,6 +115,7 @@ stateless HTTP call without changing the persisted default.
 ## Documentation
 
 - [CLI](docs/cli.md) - `courier` as a command-line client, and its exit codes
+- [Publishing](docs/publishing.md) - Releasing, and running the installed package under systemd
 - [Getting Started](docs/getting-started.md) - Full setup guide
 - [Configuration](docs/configuration.md) - Multi-account, CalDAV options
 - [Tools Reference](docs/tools.md) - All 36 tools with parameters

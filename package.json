@@ -1,12 +1,48 @@
 {
-  "name": "courier",
+  "name": "@anandman/courier",
   "version": "1.0.0",
   "description": "Your mail, calendar, contacts and tasks over JMAP and DAV. MCP server.",
+  "keywords": [
+    "caldav",
+    "calendar",
+    "claude",
+    "cli",
+    "contacts",
+    "email",
+    "fastmail",
+    "gemini",
+    "jmap",
+    "mcp",
+    "model-context-protocol",
+    "oauth"
+  ],
+  "homepage": "https://github.com/anandman/courier#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anandman/courier.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anandman/courier/issues"
+  },
+  "license": "MIT",
+  "author": "Anand Mandapati",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
     "courier": "dist/cli/bin.js",
     "courier-mcp": "dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "CHANGES.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
   },
   "scripts": {
     "build": "tsc",
@@ -17,20 +53,10 @@
     "lint": "eslint src --ext .ts",
     "prepublishOnly": "npm run build"
   },
-  "keywords": [
-    "mcp",
-    "fastmail",
-    "jmap",
-    "email",
-    "claude",
-    "gemini"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "express": "^4.21.2",
-    "jmap-courier": "file:../jmap-courier",
+    "jmap-courier": "^1.0.0",
     "jose": "^5.9.3",
     "tsdav": "^2.1.6",
     "zod": "^3.23.0",
@@ -42,8 +68,5 @@
     "dotenv": "^16.4.0",
     "typescript": "^5.6.0",
     "vitest": "^4.1.10"
-  },
-  "engines": {
-    "node": ">=20.0.0"
   }
 }
