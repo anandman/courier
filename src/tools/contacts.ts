@@ -118,7 +118,7 @@ export async function createContact(params: z.infer<typeof createContactSchema>)
     const card: Omit<ContactCard, 'id'> = {
         kind: 'individual',
         name: {
-            fullName: params.fullName,
+            full: params.fullName,
         },
     };
 
@@ -144,7 +144,7 @@ export async function createContact(params: z.infer<typeof createContactSchema>)
     }
 
     if (params.notes) {
-        card.notes = params.notes;
+        card.notes = { note1: { '@type': 'Note', note: params.notes } };
     }
 
     const created = await client.createContact(params.addressBookId, card);
@@ -174,7 +174,7 @@ export async function updateContact(params: z.infer<typeof updateContactSchema>)
     const patch: Record<string, unknown> = {};
 
     if (params.fullName !== undefined) {
-        patch['name/fullName'] = params.fullName;
+        patch['name/full'] = params.fullName;
     }
 
     if (params.email !== undefined) {
@@ -214,7 +214,12 @@ export async function updateContact(params: z.infer<typeof updateContactSchema>)
     }
 
     if (params.notes !== undefined) {
-        patch['notes'] = params.notes === '' ? null : params.notes;
+        // A map of Note objects, keyed like every other multi-valued JSContact
+        // property. Writing a bare string here silently produced a card the
+        // server would not accept.
+        const key = card.notes ? Object.keys(card.notes)[0] : 'note1';
+        patch[`notes/${key}`] =
+            params.notes === '' ? null : { '@type': 'Note', note: params.notes };
     }
 
     if (Object.keys(patch).length === 0) {
@@ -257,6 +262,36 @@ export async function deleteContact(params: z.infer<typeof deleteContactSchema>)
 // Helpers
 // ============================================================================
 
+/**
+ * The displayable name of a contact.
+ *
+ * `name.full` is what RFC 9553 specifies and what Fastmail stores. This was
+ * read as `name.fullName`, which nothing sets -- so every contact came back
+ * with `fullName: null` while the name sat in the response untouched. The
+ * tools were never run against real data, so nothing caught it.
+ *
+ * Falls back to assembling the structured components, since a card may carry
+ * those without an assembled form. Ordered given-then-surname rather than in
+ * array order, because the array is storage order and not a reading order.
+ */
+function displayName(name: ContactCard['name']): string | null {
+    if (name?.full) return name.full;
+
+    const parts = name?.components ?? [];
+    const pick = (kind: string) => parts.find((part) => part.kind === kind)?.value;
+    const assembled = [pick('given'), pick('surname')].filter(Boolean).join(' ').trim();
+    if (assembled) return assembled;
+
+    const anything = parts.map((part) => part.value).filter(Boolean).join(' ').trim();
+    return anything || null;
+}
+
+/** The first note on a card. RFC 9553 stores these as a map, not a string. */
+function firstNote(notes: ContactCard['notes']): string | null {
+    const values = notes ? Object.values(notes) : [];
+    return values[0]?.note || null;
+}
+
 function simplifyContactCard(card: ContactCard) {
     const email = card.emails ? Object.values(card.emails)[0]?.address : null;
     const phone = card.phones ? Object.values(card.phones)[0]?.number : null;
@@ -264,12 +299,13 @@ function simplifyContactCard(card: ContactCard) {
 
     return {
         id: card.id,
-        addressBookId: card.addressBookId,
-        fullName: card.name?.fullName || null,
+        // A card can belong to several address books, so this is a list.
+        addressBookIds: Object.keys(card.addressBookIds ?? {}),
+        fullName: displayName(card.name),
         email,
         phone,
         company: org?.name || null,
         jobTitle: org?.title || null,
-        notes: card.notes || null,
+        notes: firstNote(card.notes),
     };
 }
