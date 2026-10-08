@@ -12,6 +12,11 @@ import { getClient } from 'jmap-courier';
 
 const isEnabled = (value: string | undefined) => value === '1' || value === 'true';
 
+/** Whether a value can be returned as `structuredContent`, which must be an object. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * What the current account's token is permitted to do, or null when that cannot
  * be determined.
@@ -106,6 +111,9 @@ export function createMcpServer(): Server {
                     name: tool.name,
                     description: tool.description,
                     inputSchema: zodToJsonSchema(tool.inputSchema),
+                    ...(tool.outputSchema
+                        ? { outputSchema: zodToJsonSchema(tool.outputSchema) }
+                        : {}),
                 })),
         };
     });
@@ -180,6 +188,16 @@ export function createMcpServer(): Server {
                         text: JSON.stringify(result, null, 2),
                     },
                 ],
+                // Returned alongside the text, not instead of it. Every client
+                // today reads content[].text and re-parses the JSON; one that
+                // understands structuredContent gets the object without
+                // parsing, and one that does not is unaffected.
+                //
+                // Only for object results, because the field is specified as an
+                // object. A tool returning an array or a scalar simply has none
+                // rather than being wrapped in an invented envelope that
+                // consumers would then have to know about.
+                ...(isPlainObject(result) ? { structuredContent: result } : {}),
             };
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

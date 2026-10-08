@@ -53,6 +53,7 @@ import {
 // Search tools
 import {
     searchEmailsSchema,
+    searchEmailsOutputSchema,
     searchEmails,
 } from './search.js';
 
@@ -131,6 +132,17 @@ export interface ToolDefinition {
     name: string;
     description: string;
     inputSchema: z.ZodType;
+    /**
+     * The shape of what this tool returns, when it is worth promising.
+     *
+     * Optional, and deliberately not declared everywhere. A client may validate
+     * against it, so a schema that drifts from the handler turns correct
+     * results into rejected ones -- which is worse than no schema at all. It is
+     * declared only for tools whose output is pinned by a test that checks the
+     * real return value against this schema, so drift fails here rather than at
+     * a consumer.
+     */
+    outputSchema?: z.ZodType;
     handler: (params: unknown) => Promise<unknown>;
 }
 
@@ -254,6 +266,7 @@ const baseTools: ToolDefinition[] = [
         name: 'search_emails',
         description: 'Search emails with filters and return lightweight results (headers + snippet). Includes the RFC 5322 messageId, inReplyTo and references headers, so deep links and thread grouping need no follow-up fetch. Returns at most 100 per call: check `total` (all matches) against `returned` and `hasMore`, and page with `position` when the set is larger. Use this to narrow scope before calling get_email.',
         inputSchema: searchEmailsSchema,
+        outputSchema: searchEmailsOutputSchema,
         handler: (params) => searchEmails(searchEmailsSchema.parse(params)),
     },
     {

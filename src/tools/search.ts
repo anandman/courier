@@ -140,6 +140,40 @@ function anyOf(conditions: EmailFilterExpression[]): EmailFilterExpression {
     return { operator: 'OR', conditions };
 }
 
+/**
+ * What search_emails returns.
+ *
+ * Declared because a client may validate against it, which makes a schema that
+ * drifts from the handler worse than no schema: correct results start being
+ * rejected. tests/output-schemas.test.ts runs the real return value through
+ * this, so drift fails here rather than at a consumer.
+ */
+export const searchEmailsOutputSchema = z.object({
+    emails: z.array(
+        z.object({
+            id: z.string(),
+            threadId: z.string(),
+            messageId: z.array(z.string()).nullable(),
+            inReplyTo: z.array(z.string()).nullable(),
+            references: z.array(z.string()).nullable(),
+            subject: z.string().nullable(),
+            from: z.array(z.object({ name: z.string().nullable(), email: z.string() })).nullable(),
+            to: z.array(z.object({ name: z.string().nullable(), email: z.string() })).nullable(),
+            receivedAt: z.string(),
+            preview: z.string(),
+            hasAttachment: z.boolean(),
+            isRead: z.boolean(),
+            isFlagged: z.boolean(),
+            unsubscribe: z.array(z.string()).nullable(),
+        })
+    ),
+    total: z.number().describe('How many messages match the filter, not how many are in this page.'),
+    position: z.number(),
+    returned: z.number(),
+    hasMore: z.boolean(),
+    account: z.string().nullable(),
+});
+
 // Tool handlers
 export async function searchEmails(
     params: z.infer<typeof searchEmailsSchema>
