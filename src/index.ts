@@ -713,6 +713,18 @@ async function startHttpServer() {
             return;
         }
 
+        // Restoring defaults is one write rather than a change per tool, so the
+        // client is never briefly half-reset -- a request arriving mid-way would
+        // otherwise be judged against a policy nobody chose.
+        if (String(body.intent ?? '') === 'reset') {
+            const cleared = await clientStore.clearPolicy(clientId);
+            console.warn(
+                `[policy] ${uiUser.userId} restored defaults for client ${clientId}, clearing ${cleared} setting(s)`
+            );
+            res.redirect(`/ui#client-${encodeURIComponent(clientId)}`);
+            return;
+        }
+
         const changes: { tool: string; tier: Tier | null }[] = [];
         for (const [field, value] of Object.entries(body)) {
             if (!field.startsWith('tier.')) continue;

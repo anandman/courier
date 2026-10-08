@@ -971,6 +971,34 @@ export function renderOobCodePage(code: string): string {
  * when the clipboard API is unavailable -- on an insecure origin, or where the
  * permission is refused.
  */
+/**
+ * Confirms before discarding a client's permissions.
+ *
+ * Restoring defaults is mostly a loosening -- it removes grants -- but not
+ * always: a tool someone deliberately Blocked that defaults to Allow becomes
+ * callable again. That makes it a safety-relevant click, and it is next to the
+ * Save button people press routinely.
+ *
+ * Degrades honestly. With no script the form still submits, so the control
+ * works everywhere; the prompt is a courtesy, not the protection. The real
+ * protection is that the settings it clears are visible on the page and can be
+ * set again.
+ */
+const RESET_CONFIRM_SCRIPT = `
+(function () {
+  var buttons = document.querySelectorAll('.reset-policy');
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener('click', function (event) {
+      var count = this.getAttribute('data-count') || 'all';
+      var message = 'Clear ' + count + ' permission setting(s) for this client and return it to Courier defaults?';
+      if (!window.confirm(message)) {
+        event.preventDefault();
+      }
+    });
+  }
+})();
+`.trim();
+
 const COPY_SCRIPT = `
 (function () {
   var button = document.getElementById('copy');
@@ -1148,6 +1176,7 @@ function consequenceOfForDisplay(toolName: string): string {
 }
 
 function renderPolicyGroups(client: UiClient, overrides: Record<string, Tier>): string {
+    const changed = Object.keys(overrides).length;
     const sections = POLICY_SECTIONS.map(
         (section) => `<section class="policy-section">
           <h3>${escapeHtml(section.label)}</h3>
@@ -1160,8 +1189,17 @@ function renderPolicyGroups(client: UiClient, overrides: Record<string, Tier>): 
         <input type="hidden" name="clientId" value="${escapeHtml(client.clientId)}" />
         ${sections}
         <div class="actions">
-          <button class="button primary" type="submit">${checkIcon} Save permissions</button>
-          <span class="hint">Only the ones you changed are written.</span>
+          <button class="button primary" type="submit" name="intent" value="save">${checkIcon} Save permissions</button>
+          ${
+              changed > 0
+                  ? `<button class="button secondary reset-policy" type="submit" name="intent" value="reset" data-count="${changed}">Restore defaults</button>`
+                  : ''
+          }
+          <span class="hint">${
+              changed > 0
+                  ? `Only the ones you changed are written. Restoring clears all ${changed} of your settings for this client.`
+                  : 'Only the ones you changed are written.'
+          }</span>
         </div>
       </form>`;
 }
@@ -1430,6 +1468,7 @@ export function renderUiPage(
               <button class="button secondary" type="submit">Sign out</button>
             </form>
           </div>
-        </main>`
+        </main>`,
+        RESET_CONFIRM_SCRIPT
     );
 }

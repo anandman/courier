@@ -332,3 +332,41 @@ describe('per-client permissions', () => {
         expect(client.policy).toEqual({ send_email: 'allow' });
     });
 });
+
+describe('restoring a client to defaults', () => {
+    it('clears every setting and says how many', async () => {
+        await register('c1');
+        await store.promoteClient('c1', 'anand@example.com');
+        await store.setToolTier('c1', 'send_email', 'allow');
+        await store.setToolTier('c1', 'delete_contact', 'allow');
+
+        expect(await store.clearPolicy('c1')).toBe(2);
+        expect(await store.policyFor('c1')).toEqual({});
+    });
+
+    it('reports nothing cleared when there was nothing set', async () => {
+        await register('c1');
+        await store.promoteClient('c1', 'anand@example.com');
+
+        expect(await store.clearPolicy('c1')).toBe(0);
+    });
+
+    it('leaves other clients alone', async () => {
+        await register('a');
+        await register('b');
+        await store.promoteClient('a', 'anand@example.com');
+        await store.promoteClient('b', 'anand@example.com');
+        await store.setToolTier('a', 'send_email', 'allow');
+        await store.setToolTier('b', 'send_email', 'allow');
+
+        await store.clearPolicy('a');
+
+        expect(await store.policyFor('a')).toEqual({});
+        expect(await store.policyFor('b')).toEqual({ send_email: 'allow' });
+    });
+
+    it('refuses a client nobody has authorized', async () => {
+        await register('provisional');
+        expect(await store.clearPolicy('provisional')).toBe(0);
+    });
+});

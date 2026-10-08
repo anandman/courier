@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import { renderUiPage, type UiClient } from '../src/ui.js';
@@ -150,5 +152,62 @@ describe('what the settings UI no longer offers', () => {
         expect(html).not.toContain('/ui/tools');
         expect(html).not.toContain('Save tool settings');
         expect(html).not.toContain('name="group"');
+    });
+});
+
+describe('restoring a client to defaults', () => {
+    it('offers the control only when there is something to clear', () => {
+        expect(render()).not.toContain('Restore defaults');
+        expect(render({ policy: { send_email: 'allow' } })).toContain('Restore defaults');
+    });
+
+    it('says how many settings it would clear', () => {
+        const html = render({ policy: { send_email: 'allow', delete_contact: 'allow' } });
+
+        expect(html).toContain('data-count="2"');
+        expect(html).toMatch(/clears all 2 of your settings/);
+    });
+
+    it('submits through the same form, so it carries the client id', () => {
+        const html = render({ clientId: 'abc123', policy: { send_email: 'allow' } });
+
+        expect(html).toContain('name="intent" value="reset"');
+        expect(html).toContain('name="intent" value="save"');
+        expect(html).toContain('name="clientId" value="abc123"');
+    });
+
+    /**
+     * Mostly a loosening -- it removes grants -- but not always: a tool someone
+     * deliberately Blocked that defaults to Allow becomes callable again. That
+     * makes it worth a prompt, sitting as it does beside the Save button people
+     * press routinely.
+     */
+    it('confirms before discarding, by a script allowed on its own hash', () => {
+        const html = render({ policy: { send_email: 'allow' } });
+
+        expect(html).toMatch(/script-src 'sha256-[A-Za-z0-9+/]+={0,2}'/);
+        expect(html).not.toContain("script-src 'unsafe-inline'");
+        expect(html).toContain('window.confirm');
+    });
+
+    it('ships a script whose hash matches what it declared', () => {
+        const html = render({ policy: { send_email: 'allow' } });
+
+        const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
+        const declared = /script-src 'sha256-([^']+)'/.exec(html)?.[1];
+
+        expect(createHash('sha256').update(script!).digest('base64')).toBe(declared);
+    });
+
+    /**
+     * The prompt is a courtesy, not the protection: with no script the form
+     * still submits. What actually protects the user is that the settings are
+     * visible on the page and can be set again.
+     */
+    it('keeps the script constant whatever the client', () => {
+        const a = /<script>([\s\S]*?)<\/script>/.exec(render({ clientId: 'a', policy: { send_email: 'allow' } }))?.[1];
+        const b = /<script>([\s\S]*?)<\/script>/.exec(render({ clientId: 'b', policy: { delete_task: 'allow' } }))?.[1];
+
+        expect(a).toBe(b);
     });
 });

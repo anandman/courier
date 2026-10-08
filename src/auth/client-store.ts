@@ -265,6 +265,28 @@ export class CourierClientStore implements OAuthRegisteredClientsStore {
         return true;
     }
 
+    /**
+     * Drops every deliberate permission on a client, returning it to defaults.
+     *
+     * One write rather than a loop over setToolTier, so a client is never
+     * briefly half-reset -- a request arriving mid-loop would otherwise be
+     * judged against a policy that existed for no one and was never chosen.
+     *
+     * Returns how many settings were cleared, so the caller can say.
+     */
+    async clearPolicy(clientId: string): Promise<number> {
+        const clients = await this.load();
+        const entry = clients.get(clientId);
+        if (!entry || entry.expiresAt !== null) return 0;
+
+        const cleared = Object.keys(entry.policy ?? {}).length;
+        if (cleared === 0) return 0;
+
+        clients.set(clientId, { ...entry, policy: undefined });
+        await this.flush(clients);
+        return cleared;
+    }
+
     /** Records that a client is still in use. Best-effort: never blocks a request. */
     async touchClient(clientId: string, source?: string): Promise<void> {
         const clients = await this.load();
