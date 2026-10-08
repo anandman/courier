@@ -158,11 +158,16 @@ describe('masked addresses', () => {
     });
 
     it('creates an address ready to receive mail', async () => {
+        client.getMaskedEmails.mockResolvedValue([
+            { ...MASKED[0], id: 'm9', email: 'new@fastmail.com', forDomain: 'shop.example', description: 'Shop' },
+        ]);
+
         const result = await run(() =>
             createMaskedEmail(createMaskedEmailSchema.parse({ forDomain: 'shop.example', description: 'Shop' }))
         );
 
         expect(client.createMaskedEmail).toHaveBeenCalledWith({
+            emailPrefix: undefined,
             forDomain: 'shop.example',
             description: 'Shop',
             state: 'enabled',
@@ -170,7 +175,47 @@ describe('masked addresses', () => {
         expect(result.email).toBe('new@fastmail.com');
     });
 
+    /**
+     * MaskedEmail/set echoes only what the SERVER set -- the id and the address
+     * -- so state, forDomain and description came back undefined from a create
+     * that had stored all three correctly. Reporting the request as though it
+     * were the record is the mistake this file avoids everywhere else.
+     */
+    it('reports the stored record after creating, not the request', async () => {
+        client.createMaskedEmail.mockResolvedValue({ id: 'm9', email: 'new@fastmail.com' });
+        client.getMaskedEmails.mockResolvedValue([
+            { ...MASKED[0], id: 'm9', email: 'new@fastmail.com', state: 'enabled', forDomain: 'shop.example', description: 'Shop' },
+        ]);
+
+        const result = await run(() =>
+            createMaskedEmail(createMaskedEmailSchema.parse({ forDomain: 'shop.example', description: 'Shop' }))
+        );
+
+        expect(result.state).toBe('enabled');
+        expect(result.forDomain).toBe('shop.example');
+        expect(result.description).toBe('Shop');
+    });
+
+    it('says so when it cannot confirm what it created', async () => {
+        client.createMaskedEmail.mockResolvedValue({ id: 'm9', email: 'new@fastmail.com' });
+        client.getMaskedEmails.mockResolvedValue([]);
+
+        await expect(
+            run(() => createMaskedEmail(createMaskedEmailSchema.parse({})))
+        ).rejects.toThrow(/could not be read back/);
+    });
+
+    it('passes a requested prefix through', async () => {
+        client.getMaskedEmails.mockResolvedValue([{ ...MASKED[0], id: 'm9', email: 'shop.x@fastmail.com' }]);
+        await run(() => createMaskedEmail(createMaskedEmailSchema.parse({ emailPrefix: 'shop' })));
+
+        expect(client.createMaskedEmail).toHaveBeenCalledWith(
+            expect.objectContaining({ emailPrefix: 'shop' })
+        );
+    });
+
     it('can create one pending instead', async () => {
+        client.getMaskedEmails.mockResolvedValue([{ ...MASKED[0], id: 'm9', state: 'pending' }]);
         await run(() => createMaskedEmail(createMaskedEmailSchema.parse({ enabled: false })));
 
         expect(client.createMaskedEmail).toHaveBeenCalledWith(
@@ -189,6 +234,29 @@ describe('masked addresses', () => {
 
         expect(result.state).toBe('disabled');
         expect(result.message).toMatch(/bounce/);
+    });
+
+    /**
+     * "Cannot be undone" was true of the address and misleading about the mail.
+     * On a domain with a catch-all the message still arrives; on one without,
+     * it is gone -- and Courier cannot see which, so it says so rather than
+     * picking the reassuring half or the alarming one.
+     */
+    it('does not claim to know whether retiring an address stops the mail', async () => {
+        client.getMaskedEmails.mockResolvedValue([{ ...MASKED[0], state: 'deleted' }]);
+
+        const result = await run(() => updateMaskedEmail(updateMaskedEmailSchema.parse({ id: 'm1', state: 'deleted' })));
+
+        expect(result.message).toMatch(/cannot be recreated/);
+        expect(result.message).toMatch(/catch-all/);
+        expect(result.message).not.toMatch(/will no longer arrive/);
+    });
+
+    it('steers towards disabling while a site is being migrated', () => {
+        const description = updateMaskedEmailSchema.shape.state.description ?? '';
+
+        expect(description).toMatch(/PREFER disabled/);
+        expect(description).toMatch(/cannot be recreated/);
     });
 
     it('refuses a change with nothing in it', async () => {

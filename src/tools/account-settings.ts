@@ -129,6 +129,12 @@ export const listMaskedEmailsSchema = z.object({
 });
 
 export const createMaskedEmailSchema = z.object({
+    emailPrefix: z
+        .string()
+        .optional()
+        .describe(
+            'A word to begin the address with, e.g. "shop" gives shop.something@yourdomain. Worth setting when a person will see the address in a password manager later; omit to let the server choose both words.'
+        ),
     forDomain: z
         .string()
         .optional()
@@ -146,7 +152,9 @@ export const updateMaskedEmailSchema = z.object({
     state: z
         .enum(['enabled', 'disabled', 'deleted'])
         .optional()
-        .describe('enabled accepts mail; disabled bounces it; deleted retires the address. Omit to leave unchanged.'),
+        .describe(
+            'enabled accepts mail; disabled bounces it and can be re-enabled; deleted retires the address permanently. PREFER disabled while migrating a site -- the address cannot be recreated once deleted. Whether mail still reaches the account afterwards depends on a catch-all on the domain, which this server cannot see.'
+        ),
     description: z.string().optional().describe('Replacement note. Omit to leave unchanged.'),
 });
 
@@ -182,18 +190,34 @@ export async function createMaskedEmail(params: z.infer<typeof createMaskedEmail
     const { client, manager } = clientFor();
 
     const created = await client.createMaskedEmail({
+        emailPrefix: params.emailPrefix,
         forDomain: params.forDomain,
         description: params.description,
         state: params.enabled ? 'enabled' : 'pending',
     });
 
+    // Read back rather than report the create response.
+    //
+    // MaskedEmail/set echoes only the properties the SERVER set -- the id and
+    // the address -- so state, forDomain and description came back undefined
+    // while being stored perfectly well. Reporting the request as though it
+    // were the record is the mistake this file avoids everywhere else; it was
+    // only missing here.
+    const all = await client.getMaskedEmails();
+    const stored = all.find((masked) => masked.id === created.id);
+    if (!stored) {
+        throw new Error(
+            `${created.email} was created but could not be read back, so its settings are unconfirmed.`
+        );
+    }
+
     return {
-        id: created.id,
-        email: created.email,
-        state: created.state,
-        forDomain: created.forDomain || null,
-        description: created.description || null,
-        message: `Created ${created.email}. Mail sent to it arrives in this account and can be turned off without affecting anything else.`,
+        id: stored.id,
+        email: stored.email,
+        state: stored.state,
+        forDomain: stored.forDomain || null,
+        description: stored.description || null,
+        message: `Created ${stored.email}. Mail sent to it arrives in this account, and it can be disabled or retired without affecting any other address.`,
         account: manager.getCurrentAccountName(),
     };
 }
@@ -224,7 +248,7 @@ export async function updateMaskedEmail(params: z.infer<typeof updateMaskedEmail
         description: updated.description || null,
         message:
             updated.state === 'deleted'
-                ? `${updated.email} is retired. Mail sent to it will no longer arrive.`
+                ? `${updated.email} is retired and cannot be recreated. Whether mail sent to it still reaches the account depends on whether the domain has a catch-all, which Courier cannot determine -- on a domain without one, it is gone.`
                 : updated.state === 'disabled'
                   ? `${updated.email} is disabled. Mail sent to it will bounce.`
                   : `${updated.email} is enabled and receiving mail.`,

@@ -423,7 +423,7 @@ const baseTools: ToolDefinition[] = [
     {
         name: 'update_masked_email',
         description:
-            'Change a masked address: enable it, disable it so mail bounces, delete it to retire it, or update its description.',
+            'Change a masked address: enable it, disable it so mail bounces, retire it permanently, or update its description. Prefer disabled over deleted while a site is being migrated -- a deleted address cannot be recreated, and whether its mail still arrives depends on a domain catch-all this server cannot see.',
         inputSchema: updateMaskedEmailSchema,
         handler: (params) => updateMaskedEmail(updateMaskedEmailSchema.parse(params)),
     },
