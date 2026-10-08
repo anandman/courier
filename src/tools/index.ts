@@ -60,6 +60,8 @@ import {
 import {
     getEmailSchema,
     getEmail,
+    getEmailsSchema,
+    getEmails,
 } from './read.js';
 
 // Send tools
@@ -274,6 +276,13 @@ const baseTools: ToolDefinition[] = [
             'Download an attachment\u2019s content. get_email lists attachments with their blobId, name, type and size; this returns the bytes \u2014 text inline, anything else base64. Omit blobId when the message has exactly one attachment. Capped by maxBytes, and says when it truncated.',
         inputSchema: getAttachmentSchema,
         handler: (params) => getAttachment(getAttachmentSchema.parse(params)),
+    },
+    {
+        name: 'get_emails',
+        description:
+            'Read SEVERAL messages in one call, with control over how much comes back. Prefer this over repeated get_email once you have shortlisted with search_emails: it is one round trip instead of N, and maxBodyChars/includeBodies let you take only what you will actually read. Reports which requested ids were not found rather than returning a shorter list that looks complete. Never marks anything read.',
+        inputSchema: getEmailsSchema,
+        handler: (params) => getEmails(getEmailsSchema.parse(params)),
     },
     {
         name: 'get_email',
@@ -503,6 +512,7 @@ export {
     setMailboxRole,
     searchEmails,
     getEmail,
+    getEmails,
     sendEmail,
     sendDraft,
     forwardEmail,

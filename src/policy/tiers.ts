@@ -42,6 +42,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
     'search_emails',
     'changes_since',
     'get_email',
+    'get_emails',
     'read_thread',
     'get_attachment',
     'list_address_books',
