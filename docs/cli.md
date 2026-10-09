@@ -190,6 +190,19 @@ To provision a credential for a service that cannot run an interactive login,
 run the login yourself with that file's path set. One command, one paste; the
 service then just reads the file.
 
+## A note on replies and Apple Mail
+
+`courier draft-reply` writes correct threading headers, but whether the sent
+message keeps them depends on the client you send from: **macOS Mail preserves
+them, iOS Mail does not**, and on macOS a formatting change (plain text to a
+bulleted list) loses them too. See
+[Tools Reference](tools.md#replies-apple-mail-and-which-device-you-send-from).
+
+`threadingHeadersWritten` in the result describes the draft, not the sent
+message. It is named that way because it used to be called `threaded`, and a
+consumer reasonably read a true statement about the draft as a promise about
+the mail.
+
 ## Exit codes
 
 The exit code is the contract. `courier exit-codes` prints the table below as

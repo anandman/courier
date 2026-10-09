@@ -37,6 +37,44 @@ Most email tools are designed to minimize tokens if used in the right order:
 - `search_emails` returns **headers + snippet only**, not full bodies.
 - Use `get_email` only for the specific messages you need to read in full (it returns full body + attachments and is token-expensive).
 
+## Replies, Apple Mail, and which device you send from
+
+`draft_reply` and `update_draft` write `In-Reply-To` and `References` onto the
+draft, and the result reports `threadingHeadersWritten`. That is a fact about
+the stored message — verified down to the RFC 5322 bytes — and not a promise
+about the one that goes out, because **what happens next depends on the client
+that sends it**.
+
+Measured against Fastmail with a controlled 2x2 plus live mail:
+
+| Sending client | Threading headers | Draft afterwards |
+|---|---|---|
+| **macOS Mail** | preserved, edited or not | **left in Drafts** |
+| **iOS Mail** | **stripped** | removed |
+
+Each does one of the two things right.
+
+**Send Courier drafts from macOS** and replies thread correctly, including
+after you edit them. **One exception**: changing the body's *formatting* — turning
+plain text into a bulleted or numbered list, for instance — makes Mail
+re-render the message as `multipart/alternative`, and the headers are lost in
+that re-render. Editing the words is fine; restyling is not.
+
+**From iOS they will not thread.** The headers are on the draft and correct;
+iOS Mail composes a fresh message and discards them. Nothing this server can
+write changes that — Apple Mail restores reply-state from a pointer into its
+own local database (`X-Apple-Internal-Replied-Object-Id`, an archived plist of
+local account UUIDs), which no server-side draft can supply.
+
+Why this matters beyond appearances: a reply that loses its headers starts a
+new conversation in Fastmail's `threadId` and for the recipient. Your own Mac
+may still show it threaded, because macOS Mail remembers sending it — so the
+problem is invisible exactly where you would look for it. Anything asking "has
+this been replied to?" by thread or Message-ID will say no.
+
+If you cannot control the sending client, match on normalised subject as well
+as `threadId` when answering that question.
+
 ## Account Management
 
 Every email, mailbox, contact, calendar, and task tool accepts an optional
