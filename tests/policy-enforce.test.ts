@@ -220,3 +220,31 @@ describe('what the confirmation prompt says', () => {
         expect(describeCall('list_accounts', {})).toContain('list_accounts');
     });
 });
+
+describe('separating the calendar act that reaches people', () => {
+    /**
+     * create_event used to take a `notify` argument. That made it
+     * unclassifiable: creating an event is reversible and should be allowed,
+     * but a tier cannot express "allow unless this one argument is true" -- so
+     * any client permitted to add an event could email real people, and the
+     * policy had no way to stop it short of blocking calendars entirely.
+     */
+    it('lets events be created and changed, since neither emails anyone', () => {
+        expect(defaultTierFor('create_event')).toBe('allow');
+        expect(defaultTierFor('update_event')).toBe('allow');
+        expect(consequenceOf('create_event')).toMatch(/never emails them/);
+    });
+
+    it('denies the one tool that sends invitations', () => {
+        expect(defaultTierFor('invite_event_attendees')).toBe('deny');
+        expect(IRREVERSIBLE_TOOLS.has('invite_event_attendees')).toBe(true);
+        expect(consequenceOf('invite_event_attendees')).toMatch(/cannot be unsent/);
+    });
+
+    it('no longer offers notify as an argument anywhere', async () => {
+        const { createEventSchema, updateEventSchema } = await import('../src/tools/calendar.js');
+
+        expect(Object.keys(createEventSchema.shape)).not.toContain('notify');
+        expect(Object.keys(updateEventSchema.shape)).not.toContain('notify');
+    });
+});

@@ -99,6 +99,7 @@ import {
     listEventsSchema,
     getEventSchema,
     createEventSchema,
+    inviteEventAttendeesSchema,
     updateEventSchema,
     deleteEventSchema,
     listCalendars,
@@ -111,6 +112,7 @@ import {
     listEvents,
     getEvent,
     createEvent,
+    inviteEventAttendees,
     updateEvent,
     deleteEvent,
 } from './calendar.js';
@@ -525,9 +527,16 @@ const baseTools: ToolDefinition[] = [
     },
     {
         name: 'create_event',
-        description: 'Create a calendar event. Attendees are RECORDED but NOT emailed unless notify is true — inviting people is outward-facing, like sending mail, so it must be asked for deliberately. The result says which happened.',
+        description: 'Create a calendar event. Attendees are RECORDED and NEVER emailed by this tool — inviting people is outward-facing, like sending mail, so it is a separate tool (invite_event_attendees) with its own permission.',
         inputSchema: createEventSchema,
         handler: (params) => createEvent(createEventSchema.parse(params)),
+    },
+    {
+        name: 'invite_event_attendees',
+        description:
+            'Send calendar invitations to the attendees already recorded on an event. THIS EMAILS REAL PEOPLE and cannot be unsent. create_event and update_event only ever record attendees; this is the one tool that tells them.',
+        inputSchema: inviteEventAttendeesSchema,
+        handler: (params) => inviteEventAttendees(inviteEventAttendeesSchema.parse(params)),
     },
     {
         name: 'update_event',
@@ -603,6 +612,7 @@ export {
     listEvents,
     getEvent,
     createEvent,
+    inviteEventAttendees,
     updateEvent,
     deleteEvent,
 };

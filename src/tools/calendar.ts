@@ -33,26 +33,33 @@ function getClient() {
 export const listCalendarsSchema = z.object({});
 
 /**
- * Inviting people is an outward-facing act, like sending mail.
+ * Inviting people is an outward-facing act, like sending mail -- and it is now
+ * its own tool.
  *
- * `attendees` records who is invited; `notify` decides whether they are told,
- * and defaults to false. One tool rather than two because the arguments are
- * identical either way -- only a side effect differs -- and because
- * `notify: false` is enforceable: RFC 6638 SCHEDULE-AGENT=NONE suppresses the
- * server's invitations, verified against Fastmail with a control.
+ * `notify` used to live here as an argument defaulting to false. That was
+ * safe by default and ungovernable: create_event is allowed by default because
+ * creating an event is reversible, and a permission tier cannot express "allow
+ * unless this one argument is true". Any client permitted to add an event could
+ * therefore email real people, and nothing in the policy could stop it without
+ * blocking calendar use entirely.
+ *
+ * So these tools now only ever RECORD attendees -- RFC 6638
+ * SCHEDULE-AGENT=NONE, verified against Fastmail with a control -- and
+ * invite_event_attendees is the one act that sends, with its own tier.
  */
 const attendeeFields = {
     attendees: z
         .array(z.string())
         .optional()
-        .describe('Email addresses to invite. Recorded on the event. Nobody is emailed unless notify is true.'),
-    notify: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe('Send calendar invitations to the attendees. Default false — this emails real people, so set it deliberately.'),
+        .describe(
+            'Email addresses to record on the event. NOBODY IS EMAILED: this only writes them onto the event. Use invite_event_attendees to actually send invitations.'
+        ),
     organizer: z.string().optional().describe('Organiser address. Defaults to the account.'),
 };
+
+export const inviteEventAttendeesSchema = z.object({
+    eventUrl: z.string().describe('The event to send invitations for (use a url from list_events).'),
+});
 
 export async function listCalendars(): Promise<{
     calendars: Array<{
@@ -376,7 +383,8 @@ export async function createEvent(params: z.infer<typeof createEventSchema>): Pr
         status: params.status,
         recurrenceRule: params.recurrenceRule,
         attendees: params.attendees,
-        notify: params.notify,
+        // Recorded, never sent. invite_event_attendees is the tool that sends.
+        notify: false,
         organizer: params.organizer,
     };
 
@@ -388,13 +396,11 @@ export async function createEvent(params: z.infer<typeof createEventSchema>): Pr
     const note =
         invited === 0
             ? ''
-            : params.notify
-              ? ` Invitations were sent to ${invited} attendee${invited === 1 ? '' : 's'}.`
-              : ` ${invited} attendee${invited === 1 ? ' was' : 's were'} recorded on the event but NOT notified; call again with notify: true to invite them.`;
+            : ` ${invited} attendee${invited === 1 ? ' was' : 's were'} recorded on the event but NOT emailed. Use invite_event_attendees to send invitations.`;
 
     return {
         event,
-        notified: Boolean(params.notify && invited > 0),
+        notified: false,
         attendees: params.attendees ?? [],
         message: `Event "${params.summary}" created.${note}`,
     };
@@ -456,5 +462,56 @@ export async function deleteEvent(params: z.infer<typeof deleteEventSchema>): Pr
 
     return {
         message: 'Event deleted successfully',
+    };
+}
+
+/**
+ * Sends calendar invitations for an event that already exists.
+ *
+ * The one act in this file that reaches other people, separated from creating
+ * and updating so it can be governed on its own. Those record attendees and
+ * never email them; this emails them.
+ *
+ * Splitting it was the only way to make the permission expressible. create_event
+ * is allowed by default because creating an event is reversible, and a tier
+ * cannot say "allow unless this argument is true" -- so while `notify` was an
+ * argument, any client permitted to add an event could email real people and
+ * the policy had no way to prevent it short of blocking calendars entirely.
+ */
+export async function inviteEventAttendees(
+    params: z.infer<typeof inviteEventAttendeesSchema>
+): Promise<{
+    invited: string[];
+    count: number;
+    message: string;
+}> {
+    const client = getClient();
+
+    const event = await client.getEvent(params.eventUrl);
+    if (!event) {
+        throw new Error(`No event at ${params.eventUrl}`);
+    }
+
+    const attendees = event.attendees ?? [];
+    if (attendees.length === 0) {
+        // Refused rather than reported as a no-op success: a caller that meant
+        // to invite people and reached an event with none has made a mistake,
+        // and "invited 0 people" reads like it worked.
+        throw new Error(
+            'This event has no attendees recorded, so there is nobody to invite. Add them with update_event first.'
+        );
+    }
+
+    await client.updateEvent(params.eventUrl, {
+        attendees,
+        // The whole point of this call: let the server send the iTIP
+        // invitations that SCHEDULE-AGENT=NONE has been suppressing.
+        notify: true,
+    } as EventUpdate);
+
+    return {
+        invited: attendees,
+        count: attendees.length,
+        message: `Invitations sent to ${attendees.length} attendee${attendees.length === 1 ? '' : 's'}. This cannot be unsent.`,
     };
 }

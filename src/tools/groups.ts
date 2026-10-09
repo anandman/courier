@@ -95,7 +95,15 @@ export const TOOL_GROUPS: ToolGroup[] = [
         id: 'calendar',
         label: 'Calendar',
         description: 'Calendars and events, over CalDAV.',
-        tools: ['list_calendars', 'list_events', 'get_event', 'create_event', 'update_event', 'delete_event'],
+        tools: [
+            'list_calendars',
+            'list_events',
+            'get_event',
+            'create_event',
+            'update_event',
+            'invite_event_attendees',
+            'delete_event',
+        ],
     },
     {
         id: 'tasks',

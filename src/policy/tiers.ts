@@ -12,11 +12,15 @@
  * a disagreement that would show up as a command refusing locally what the
  * server permits, or worse, the reverse.
  *
- * The default is per-tool and deliberately conservative where it matters: a
- * tool nobody has classified is `confirm`, not `allow`. The list enumerates
- * what is safe, so a tool added tomorrow is gated until someone looks at it.
- * The inverse -- enumerate the dangerous ones -- fails by letting a new write
- * tool straight through, and the cost of the two mistakes is not symmetric.
+ * Nothing DEFAULTS to `confirm`, because it cannot be delivered over the
+ * stateless transport -- see defaultTierFor. A person may still choose it per
+ * client, and it becomes real the day the transport gains a session.
+ *
+ * The default is per-tool and deliberately conservative: a tool nobody has
+ * classified is `deny`. The lists enumerate what is safe, so a tool added
+ * tomorrow is refused until someone looks at it. The inverse -- enumerate the
+ * dangerous ones -- fails by letting a new destructive tool straight through,
+ * and the cost of the two mistakes is not symmetric.
  */
 
 export const TIERS = ['allow', 'confirm', 'deny'] as const;
@@ -83,6 +87,10 @@ export const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set([
     // account replies to every stranger who writes, repeatedly, and the person
     // who turned it on is rarely the one who notices.
     'set_vacation_responder',
+    // Sends iTIP invitations. create_event and update_event only ever record
+    // attendees, so this is the one calendar act that reaches anyone -- which
+    // is the reason it is a tool rather than an argument on those.
+    'invite_event_attendees',
     // Destructive: nothing to recover from afterwards.
     'delete_mailbox',
     'delete_contact',
@@ -99,6 +107,10 @@ export const OUTWARD_FACING_TOOLS: ReadonlySet<string> = new Set([
     'send_draft',
     'forward_email',
     'set_vacation_responder',
+    // Sends iTIP invitations to real people. create_event and update_event
+    // only ever record attendees, so this is the one calendar act that reaches
+    // anyone -- which is why it is a tool rather than an argument.
+    'invite_event_attendees',
 ]);
 
 /**
@@ -134,11 +146,12 @@ export function defaultTierFor(toolName: string): Tier {
  * moved message can be moved again. Allowed by default because the realistic
  * failure is an agent making a mess rather than destroying anything.
  *
- * `create_event` and `update_event` sit here with a caveat worth stating: they
- * record attendees without emailing them unless `notify` is true, so the tool
- * itself holds the outward-facing part behind a deliberate argument. A client
- * allowed to create events can still pass `notify: true`. If that matters for a
- * given client, set those two to deny for it.
+ * `create_event` and `update_event` belong here now that they cannot email
+ * anyone. They used to take a `notify` argument, which made them unclassifiable:
+ * creating an event is reversible and should be allowed, but a tier cannot say
+ * "allow unless this one argument is true", so any client permitted to add an
+ * event could invite real people. Sending moved to invite_event_attendees,
+ * which has its own tier, and these became plainly reversible.
  */
 export const REVERSIBLE_WRITE_TOOLS: ReadonlySet<string> = new Set([
     // Mail that stays in the mailbox
@@ -194,6 +207,9 @@ export function consequenceOf(toolName: string): string {
     if (toolName === 'set_vacation_responder') {
         return 'makes the account reply automatically to everyone who writes, until it is turned off';
     }
+    if (toolName === 'invite_event_attendees') {
+        return 'emails calendar invitations to the attendees, which cannot be unsent';
+    }
     if (OUTWARD_FACING_TOOLS.has(toolName)) {
         return 'sends a message to other people, which cannot be undone';
     }
@@ -212,7 +228,7 @@ export function consequenceOf(toolName: string): string {
         return 'writes a message into your mailbox';
     }
     if (toolName === 'create_event' || toolName === 'update_event') {
-        return 'changes your calendar, and may notify attendees if asked to';
+        return 'changes your calendar. It records attendees but never emails them';
     }
     if (toolName.startsWith('create_') || toolName.startsWith('update_') || toolName.startsWith('complete_')) {
         return 'changes stored data';
