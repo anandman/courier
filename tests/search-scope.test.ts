@@ -248,3 +248,72 @@ describe('matching any of several values', () => {
         expect(JSON.stringify(capturedFilter)).toContain('"AND"');
     });
 });
+
+describe('searching inside one conversation', () => {
+    const THREAD = [
+        { id: 'a', threadId: 'T', subject: 'Budget', from: [{ email: 'dan@example.com', name: 'Dan' }], to: [{ email: 'me@example.com', name: null }], cc: null, bcc: null, receivedAt: '2026-01-01T00:00:00Z', preview: 'first', keywords: { $seen: true }, hasAttachment: false, messageId: ['<a>'], inReplyTo: null, references: null, textBody: [{ partId: 'p' }], bodyValues: { p: { value: 'the Q3 numbers are attached' } } },
+        { id: 'b', threadId: 'T', subject: 'Re: Budget', from: [{ email: 'me@example.com', name: null }], to: [{ email: 'dan@example.com', name: 'Dan' }], cc: null, bcc: null, receivedAt: '2026-02-01T00:00:00Z', preview: 'second', keywords: {}, hasAttachment: true, messageId: ['<b>'], inReplyTo: ['<a>'], references: ['<a>'], textBody: [{ partId: 'p' }], bodyValues: { p: { value: 'thanks, looks fine' } } },
+    ];
+
+    beforeEach(() => {
+        capturedFilter = undefined;
+        client.getThread = vi.fn(async () => THREAD);
+    });
+
+    afterEach(() => vi.clearAllMocks());
+
+    /**
+     * JMAP has no filter for a conversation, so this is answered by reading the
+     * thread rather than querying. A thread is bounded and usually small, so it
+     * is one extra round trip -- and it yields an accurate total, which
+     * intersecting a paged query against the thread's ids would not.
+     */
+    it('reads the thread instead of querying', async () => {
+        const result = await search({ threadId: 'T', limit: 20 });
+
+        expect(client.getThread).toHaveBeenCalledWith('T', expect.anything());
+        expect(client.queryEmailsPage).not.toHaveBeenCalled();
+        expect(result.total).toBe(2);
+        expect(result.returned).toBe(2);
+    });
+
+    it('applies the other filters within it', async () => {
+        const result = await search({ threadId: 'T', from: 'dan@example.com', limit: 20 });
+
+        expect(result.emails.map((e) => e.id)).toEqual(['a']);
+        expect(result.total).toBe(1);
+    });
+
+    it('filters on flags and attachments the same way', async () => {
+        expect((await search({ threadId: 'T', isUnread: true, limit: 20 })).emails.map((e) => e.id)).toEqual(['b']);
+        expect((await search({ threadId: 'T', hasAttachment: true, limit: 20 })).emails.map((e) => e.id)).toEqual(['b']);
+    });
+
+    it('matches a participant in any field', async () => {
+        expect((await search({ threadId: 'T', participant: 'dan@example.com', limit: 20 })).total).toBe(2);
+    });
+
+    /**
+     * The one filter that behaves differently, and the parameter says so. The
+     * provider tokenises and matches whole words; reproducing that faithfully
+     * here is not possible, so this is a substring match -- MORE permissive,
+     * never less, so a caller cannot miss a message it would otherwise find.
+     */
+    it('searches text as a substring, which the parameter admits', async () => {
+        const result = await search({ threadId: 'T', query: 'Q3 numbers', limit: 20 });
+        expect(result.emails.map((e) => e.id)).toEqual(['a']);
+
+        const description = searchEmailsSchema.shape.threadId.description ?? '';
+        expect(description).toMatch(/SUBSTRING/);
+        expect(description).toMatch(/whole-word/);
+    });
+
+    it('pages within the conversation and reports the true total', async () => {
+        const result = await search({ threadId: 'T', limit: 1, position: 1 });
+
+        expect(result.returned).toBe(1);
+        expect(result.total).toBe(2);
+        expect(result.position).toBe(1);
+        expect(result.hasMore).toBe(false);
+    });
+});

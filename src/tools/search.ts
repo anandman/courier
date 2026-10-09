@@ -47,6 +47,12 @@ const oneOrMore = z.union([z.string(), z.array(z.string()).min(1)]).optional();
 export const MAX_PAGE_SIZE = 100;
 
 export const searchEmailsSchema = z.object({
+    threadId: z
+        .string()
+        .optional()
+        .describe(
+            'Search within ONE conversation. Use a threadId from search_emails or read_thread. JMAP has no thread filter, so this is answered by reading the thread and filtering it here, which has one consequence worth knowing: `query` becomes a case-insensitive SUBSTRING match over subject and body, rather than the whole-word match the provider does. Every other filter behaves identically.'
+        ),
     mailbox: oneOrMore.describe('Mailbox to search in. Accepts a list to search several at once. Omit to search all mail EXCEPT Junk and Trash, which is usually what you want. Pass "Inbox" when the question is specifically about the inbox ("do I have new mail?", "what is my latest unread message?"), since mail filed into other folders would otherwise be included. Pass "Junk" or "Trash" explicitly to search those — they are never searched by default. The standard names ("Inbox", "Sent", "Drafts", "Archive", "Junk", "Trash") always find the right folder whatever the provider calls it — "Junk" finds a folder named "Spam". Any other folder is matched by name, or by full path ("migrated/Junk") when the name is ambiguous.'),
     query: z.string().optional().describe('Full-text search query (use sparingly; can expand results).'),
     from: oneOrMore
@@ -120,6 +126,94 @@ export function toEmailSummary(email: Email): EmailSummary {
         // person whose mailbox it is -- so Courier surfaces the option and
         // offers no tool that acts on it.
         unsubscribe: email['header:List-Unsubscribe:asURLs'] ?? null,
+    };
+}
+
+/**
+ * Searches inside a single conversation.
+ *
+ * The structural filters are applied exactly as the server would apply them.
+ * The free-text `query` is the one that differs: the provider tokenises on
+ * punctuation and matches whole words, and reproducing that faithfully here is
+ * not possible, so this does a case-insensitive substring match instead. That
+ * is MORE permissive, never less, so a caller cannot miss a message it would
+ * otherwise have found -- but it is a different question being answered, and
+ * the parameter says so rather than leaving it to be discovered.
+ */
+async function searchWithinThread(
+    client: ReturnType<typeof getClient>,
+    params: z.infer<typeof searchEmailsSchema>,
+    manager: ReturnType<typeof getAccountManager>
+) {
+    const all = await client.getThread(params.threadId!, { withBodies: Boolean(params.query) });
+
+    const wanted = (value: string | string[] | undefined) =>
+        value === undefined ? undefined : asList(value).map((entry) => entry.toLowerCase());
+
+    const addresses = (list: { email: string; name?: string | null }[] | null | undefined) =>
+        (list ?? []).map((entry) => `${entry.name ?? ''} ${entry.email}`.toLowerCase());
+
+    const from = wanted(params.from);
+    const to = wanted(params.to);
+    const cc = wanted(params.cc);
+    const participant = wanted(params.participant);
+    const hasKeyword = wanted(params.hasKeyword);
+    const lacksKeyword = wanted(params.lacksKeyword);
+    const needle = params.query?.toLowerCase();
+    const after = params.after ? new Date(params.after).getTime() : undefined;
+    const before = params.before ? new Date(params.before).getTime() : undefined;
+
+    const matches = all.filter((email) => {
+        const keywords = Object.keys(email.keywords ?? {}).map((keyword) => keyword.toLowerCase());
+        const everyone = [
+            ...addresses(email.from),
+            ...addresses(email.to),
+            ...addresses(email.cc),
+            ...addresses(email.bcc),
+        ];
+        const received = new Date(email.receivedAt).getTime();
+
+        const anyMatch = (values: string[] | undefined, haystack: string[]) =>
+            values === undefined || values.some((value) => haystack.some((entry) => entry.includes(value)));
+
+        if (!anyMatch(from, addresses(email.from))) return false;
+        if (!anyMatch(to, addresses(email.to))) return false;
+        if (!anyMatch(cc, addresses(email.cc))) return false;
+        if (!anyMatch(participant, everyone)) return false;
+        if (!anyMatch(hasKeyword, keywords)) return false;
+        if (lacksKeyword?.some((keyword) => keywords.includes(keyword))) return false;
+        if (params.subject && !(email.subject ?? '').toLowerCase().includes(params.subject.toLowerCase())) {
+            return false;
+        }
+        if (params.hasAttachment !== undefined && email.hasAttachment !== params.hasAttachment) return false;
+        if (params.isUnread === true && keywords.includes('$seen')) return false;
+        if (params.isUnread === false && !keywords.includes('$seen')) return false;
+        if (after !== undefined && received < after) return false;
+        if (before !== undefined && received > before) return false;
+
+        if (needle) {
+            const partId = email.textBody?.[0]?.partId;
+            const body = partId && email.bodyValues?.[partId] ? email.bodyValues[partId].value : email.preview;
+            const haystack = `${email.subject ?? ''}\n${body ?? ''}`.toLowerCase();
+            if (!haystack.includes(needle)) return false;
+        }
+
+        return true;
+    });
+
+    const limit = params.limit || 20;
+    const position = Math.max(0, Math.trunc(params.position || 0));
+    const page = matches.slice(position, position + limit);
+
+    return {
+        emails: page.map(toEmailSummary),
+        // Counted across the whole thread, not the page, exactly as the
+        // unscoped search reports it.
+        total: matches.length,
+        position,
+        returned: page.length,
+        hasMore: position + page.length < matches.length,
+        account: manager.getCurrentAccountName(),
     };
 }
 
@@ -197,6 +291,14 @@ export async function searchEmails(
     }
 
     const client = getClient(account);
+
+    // One conversation is answered by reading it, because JMAP has no filter
+    // for it. A thread is bounded and usually small, so this is one extra
+    // round trip rather than a scan -- and it gives an accurate total, which
+    // intersecting a paged query against the thread's ids would not.
+    if (params.threadId) {
+        return searchWithinThread(client, params, manager);
+    }
 
     // Build filter
 
