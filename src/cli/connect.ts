@@ -157,7 +157,19 @@ export class CourierSession {
 
         const envelope = result as Record<string, unknown>;
         if (envelope.isError === true) {
-            throw new CliError(EXIT.TOOL_ERROR, extractErrorMessage(envelope));
+            const failure = describeToolFailure(envelope);
+            // `upstream-auth` is the one failure no retry and no re-login
+            // fixes: the server's own credential for the mail provider was
+            // refused, and a human has to rotate it. Worth its own code
+            // precisely because an unattended consumer would otherwise retry
+            // forever or treat it as an ordinary bad argument.
+            throw new CliError(
+                failure.code === 'upstream-auth' ? EXIT.UPSTREAM_AUTH : EXIT.TOOL_ERROR,
+                failure.message,
+                failure.code === 'upstream-auth'
+                    ? "Courier's own credential for the mail provider was rejected. Retrying will not help; the token or app password needs replacing in Courier's settings."
+                    : undefined
+            );
         }
 
         return unwrapPayload(envelope, name);
@@ -326,19 +338,43 @@ function tryParseJson(value: string): unknown {
     }
 }
 
-function extractErrorMessage(result: Record<string, unknown>): string {
+/**
+ * What went wrong, and whether the server classified it.
+ *
+ * Reads `errorCode` where the server supplies one, and never infers a code from
+ * the message. Matching on wording is how a classification rots silently while
+ * continuing to look authoritative, which is why this field exists at all.
+ */
+export function describeToolFailure(result: Record<string, unknown>): { message: string; code?: string } {
+    const structured = result.structuredContent;
+    if (structured && typeof structured === 'object') {
+        const record = structured as { error?: unknown; errorCode?: unknown };
+        if (typeof record.error === 'string') {
+            return {
+                message: record.error,
+                code: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+            };
+        }
+    }
+
     const blocks = Array.isArray(result.content) ? result.content : [];
     for (const block of blocks) {
         if (typeof block === 'object' && block !== null && typeof (block as { text?: unknown }).text === 'string') {
             const text = (block as { text: string }).text;
             const parsed = tryParseJson(text);
-            if (parsed && typeof parsed === 'object' && typeof (parsed as { error?: unknown }).error === 'string') {
-                return (parsed as { error: string }).error;
+            if (parsed && typeof parsed === 'object') {
+                const record = parsed as { error?: unknown; errorCode?: unknown };
+                if (typeof record.error === 'string') {
+                    return {
+                        message: record.error,
+                        code: typeof record.errorCode === 'string' ? record.errorCode : undefined,
+                    };
+                }
             }
-            return text;
+            return { message: text };
         }
     }
-    return 'The tool reported an error but gave no message.';
+    return { message: 'The tool reported an error but gave no message.' };
 }
 
 const NETWORK_CODES = new Set([

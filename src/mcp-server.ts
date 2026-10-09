@@ -8,7 +8,7 @@ import { tools } from './tools/index.js';
 import { isToolSupported, unsupportedToolMessage } from './tools/scopes.js';
 import { enforce } from './policy/enforce.js';
 import { resolvePolicy } from './policy/registry.js';
-import { getClient } from 'jmap-courier';
+import { getClient, isUpstreamAuthError } from 'jmap-courier';
 
 const isEnabled = (value: string | undefined) => value === '1' || value === 'true';
 
@@ -202,14 +202,35 @@ export function createMcpServer(): Server {
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             logToolCall(name, args, startedAt, message);
+
+            // A credential the PROVIDER refused is tagged, because it is the
+            // one failure where retrying never helps and a human must rotate
+            // something. Untagged, it is indistinguishable from "no such email
+            // id" -- and an unattended consumer can only retry forever or stop
+            // for everything, both wrong.
+            //
+            // A machine-readable field rather than a phrase, so a consumer is
+            // never matching on wording that can change underneath it.
+            const upstreamAuth = isUpstreamAuthError(error);
+            if (upstreamAuth) {
+                console.warn(
+                    `[upstream] ${name} failed because the provider rejected this account's credentials`
+                );
+            }
+
             return {
                 content: [
                     {
                         type: 'text',
-                        text: JSON.stringify({ error: message }, null, 2),
+                        text: JSON.stringify(
+                            upstreamAuth ? { error: message, errorCode: 'upstream-auth' } : { error: message },
+                            null,
+                            2
+                        ),
                     },
                 ],
                 isError: true,
+                ...(upstreamAuth ? { structuredContent: { error: message, errorCode: 'upstream-auth' } } : {}),
             };
         }
     });

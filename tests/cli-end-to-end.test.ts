@@ -250,10 +250,11 @@ describe('help and the contract itself', () => {
         expect(result.code).toBe(EXIT.OK);
         const table = JSON.parse(result.stdout) as { code: number; name: string; emitted: boolean }[];
         expect(table.find((entry) => entry.code === 0)?.name).toBe('ok');
-        expect(table.find((entry) => entry.name === 'upstream-auth')?.emitted).toBe(false);
-        // incomplete is emitted: --all raises it rather than printing a
-        // partial set, which is what makes the code worth publishing.
-        expect(table.find((entry) => entry.name === 'incomplete')?.emitted).toBe(true);
+        // Every published code is emitted now. upstream-auth was reserved
+        // while the server had no way to say "the provider refused our
+        // credential" apart from prose; it is carried by a structured
+        // errorCode, so a consumer can act on it.
+        expect(table.every((entry) => entry.emitted)).toBe(true);
     });
 });
 

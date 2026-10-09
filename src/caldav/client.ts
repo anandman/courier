@@ -5,6 +5,7 @@
  * Uses the tsdav library for CalDAV protocol operations.
  */
 
+import { UpstreamAuthError } from 'jmap-courier';
 import { DAVClient, DAVCalendar, DAVObject } from 'tsdav';
 import type {
     CalDAVConfig,
@@ -164,7 +165,7 @@ export class CalDAVClient {
         try {
             await this.client.login();
         } catch (error) {
-            throw new Error(await this.explainLoginFailure(error));
+            throw await this.explainLoginFailure(error);
         }
         this.connected = true;
     }
@@ -183,7 +184,7 @@ export class CalDAVClient {
      * Falls back to the original message if the probe itself fails -- a worse
      * error here must not replace a real one.
      */
-    private async explainLoginFailure(error: unknown): Promise<string> {
+    private async explainLoginFailure(error: unknown): Promise<Error> {
         const original = error instanceof Error ? error.message : String(error);
 
         try {
@@ -202,17 +203,27 @@ export class CalDAVClient {
             });
 
             if (response.status === 401 || response.status === 403) {
-                return (
+                // Raised as UpstreamAuthError so a consumer can recognise a
+                // refused credential without reading the sentence. The sentence
+                // stays, because a person still has to read something.
+                return new UpstreamAuthError(
                     `CalDAV rejected the credentials for "${this.config.username}" (HTTP ${response.status}). ` +
-                    'The app password is wrong, expired, or has been revoked — this is an authentication ' +
-                    'failure, not a server or path problem. Note that mail may keep working, since it uses ' +
-                    `a separate credential. Original error: ${original}`
+                        'The app password is wrong, expired, or has been revoked — this is an authentication ' +
+                        'failure, not a server or path problem. Note that mail may keep working, since it uses ' +
+                        `a separate credential. Original error: ${original}`,
+                    { status: response.status, service: 'dav' }
                 );
             }
 
-            return `CalDAV login failed although the server accepted the credentials (HTTP ${response.status}): ${original}`;
-        } catch {
-            return original;
+            return new Error(
+                `CalDAV login failed although the server accepted the credentials (HTTP ${response.status}): ${original}`
+            );
+        } catch (probeFailure) {
+            // A failure probing must not replace a real error, and must not be
+            // mistaken for one: if the probe itself raised our own typed error,
+            // that is the answer.
+            if (probeFailure instanceof UpstreamAuthError) return probeFailure;
+            return error instanceof Error ? error : new Error(original);
         }
     }
 

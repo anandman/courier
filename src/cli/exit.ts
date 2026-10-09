@@ -84,18 +84,17 @@ export const EXIT = {
     TOOL_ERROR: 7,
 
     /**
-     * Reserved: the server's own upstream credential -- the JMAP API token or
-     * the DAV app password -- was rejected by the mail provider.
+     * The server's own upstream credential -- the JMAP API token or the DAV
+     * app password -- was rejected by the mail provider.
      *
-     * NOT YET EMITTED. The distinction matters more than any other here,
-     * because it is the one failure that no retry and no re-login fixes: a
-     * human must rotate a credential on the provider's side. But today that
-     * fact reaches the CLI only as prose inside a TOOL_ERROR message, and
-     * pattern-matching a peer's wording would rot the moment the wording
-     * changes -- while reading as authoritative in the meantime. Emitting this
-     * code requires the server to tag the failure structurally; until it does,
-     * these surface as TOOL_ERROR, which is still non-zero and still prints no
-     * data, so the safety property holds and only the diagnosis is coarse.
+     * The one failure that neither retrying nor re-authorising fixes: a human
+     * must rotate a credential on the provider's side. Separating it matters
+     * because an unattended consumer otherwise has two bad options, retry
+     * forever or stop for every tool error, and the right response is neither.
+     *
+     * Carried by an `errorCode` the server sets, never inferred from the
+     * message. Matching on wording is how a classification rots silently while
+     * continuing to look authoritative.
      */
     UPSTREAM_AUTH: 8,
 
@@ -195,8 +194,8 @@ export function describeExitCodes(): ExitCodeDescription[] {
         [EXIT.UNREACHABLE]: { meaning: 'No answer could be obtained from the server. Safe to retry.' },
         [EXIT.TOOL_ERROR]: { meaning: 'The server answered, and the operation failed.' },
         [EXIT.UPSTREAM_AUTH]: {
-            meaning: "The server's upstream mail credential was rejected. Reserved; currently surfaces as tool-error.",
-            emitted: false,
+            meaning:
+                "The server's own credential for the mail provider was rejected. Retrying will not help; a human must replace it.",
         },
         [EXIT.INCOMPLETE]: {
             meaning: 'A paged read failed part way through. The partial result is discarded, not printed.',

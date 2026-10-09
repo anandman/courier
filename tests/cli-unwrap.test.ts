@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { unwrapPayload } from '../src/cli/connect.js';
+import { describeToolFailure, unwrapPayload } from '../src/cli/connect.js';
 import { CliError, EXIT } from '../src/cli/exit.js';
 
 /**
@@ -87,5 +87,62 @@ describe('unwrapping a tool result', () => {
         );
 
         expect(payload).toEqual({ total: 0, returned: 0, emails: [] });
+    });
+});
+
+describe('telling a refused provider credential from an ordinary failure', () => {
+    /**
+     * The one failure neither retrying nor re-authorising fixes: Courier's own
+     * JMAP token or DAV app password was rejected, and a human must replace it.
+     * Untagged it was indistinguishable from "no such email id", leaving an
+     * unattended consumer to retry forever or stop for everything.
+     *
+     * Carried by a structured errorCode the server sets. Never inferred from
+     * the message -- matching on wording is how a classification rots silently
+     * while continuing to look authoritative.
+     */
+    it('reads the code the server set, from structuredContent', () => {
+        const failure = describeToolFailure({
+            isError: true,
+            structuredContent: { error: 'provider rejected the token', errorCode: 'upstream-auth' },
+            content: [{ type: 'text', text: '{"error":"provider rejected the token","errorCode":"upstream-auth"}' }],
+        });
+
+        expect(failure.code).toBe('upstream-auth');
+        expect(failure.message).toBe('provider rejected the token');
+    });
+
+    it('reads it from the text block when there is no structured content', () => {
+        const failure = describeToolFailure({
+            isError: true,
+            content: [{ type: 'text', text: '{"error":"refused","errorCode":"upstream-auth"}' }],
+        });
+
+        expect(failure.code).toBe('upstream-auth');
+    });
+
+    it('leaves an ordinary failure uncoded', () => {
+        const failure = describeToolFailure({
+            isError: true,
+            content: [{ type: 'text', text: '{"error":"Email not found: abc"}' }],
+        });
+
+        expect(failure.code).toBeUndefined();
+        expect(failure.message).toBe('Email not found: abc');
+    });
+
+    it('does not invent a code from wording that merely sounds like one', () => {
+        const failure = describeToolFailure({
+            isError: true,
+            content: [{ type: 'text', text: '{"error":"API token has been disabled"}' }],
+        });
+
+        expect(failure.code).toBeUndefined();
+    });
+
+    it('still reports a message when the server sent no JSON at all', () => {
+        expect(describeToolFailure({ isError: true, content: [{ type: 'text', text: 'plain' }] })).toEqual({
+            message: 'plain',
+        });
     });
 });

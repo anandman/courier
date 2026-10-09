@@ -83,15 +83,15 @@ describe('the exit-code contract', () => {
     });
 
     /**
-     * A reserved code must say it is reserved. A consumer that waited for
-     * upstream-auth as a signal, not knowing nothing emits it yet, would treat
-     * a dead provider credential as an ordinary tool failure forever.
+     * Every code is emitted now. upstream-auth was reserved while nothing could
+     * produce it -- the server had no way to say "the provider refused our
+     * credential" apart from prose -- and a consumer waiting on it as a signal
+     * would have waited forever. It is carried by a structured errorCode now.
      */
-    it('admits which codes nothing emits yet', () => {
-        const byName = new Map(describeExitCodes().map((entry) => [entry.name, entry]));
-        expect(byName.get('upstream-auth')?.emitted).toBe(false);
-        expect(byName.get('tool-error')?.emitted).toBe(true);
-        expect(byName.get('ok')?.emitted).toBe(true);
+    it('emits every code it publishes', () => {
+        for (const entry of describeExitCodes()) {
+            expect(entry.emitted, entry.name).toBe(true);
+        }
     });
 
     it('never reports success as retriable or needing a person', () => {
