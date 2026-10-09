@@ -330,7 +330,7 @@ const baseTools: ToolDefinition[] = [
     {
         name: 'draft_reply',
         description:
-            'Draft a reply to an existing message into Drafts WITHOUT sending it. Addresses the original sender, keeps the conversation threaded (In-Reply-To/References), prefixes Re: once, quotes the original, and sends as whichever of your addresses the original was addressed to. Nothing is transmitted.',
+            'Draft a reply to an existing message into Drafts WITHOUT sending it. Addresses the original sender, writes In-Reply-To and References so it threads, prefixes Re: once, quotes the original, and sends as whichever of your addresses the original was addressed to. Nothing is transmitted. The result reports threadingHeadersWritten -- a fact about the DRAFT; whether the reply actually threads also depends on how it is sent, since some mail clients rebuild a draft on send and drop those headers.',
         inputSchema: draftReplySchema,
         handler: (params) => draftReply(draftReplySchema.parse(params)),
     },

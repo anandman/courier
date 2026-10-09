@@ -80,8 +80,22 @@ export interface DraftResult {
     from: string;
     to: string[];
     subject: string;
-    /** True when the draft carries In-Reply-To, i.e. it will thread. */
-    threaded: boolean;
+    /**
+     * True when In-Reply-To and References were written onto the draft.
+     *
+     * A fact about the stored message, not a prediction about the sent one.
+     * This was called `threaded`, which read as "this will appear as a reply"
+     * -- and the two diverge exactly where it matters: a mail client that loads
+     * a draft into its composer and rebuilds the message on send drops headers
+     * its composer does not manage, so a correctly-threaded draft can arrive as
+     * an orphan.
+     *
+     * That happened. A consumer read `threaded: true`, and the field was
+     * telling the truth about the draft while the recipient saw a new
+     * conversation; nothing downstream could detect the difference, and a
+     * dashboard asked Anand twice to confirm a call he had already confirmed.
+     */
+    threadingHeadersWritten: boolean;
     message: string;
     account: string | null;
 }
@@ -160,7 +174,7 @@ export async function draftEmail(params: z.infer<typeof draftEmailSchema>): Prom
         from: created.from,
         to,
         subject: params.subject,
-        threaded: false,
+        threadingHeadersWritten: false,
         message:
             'Draft saved to Drafts. Nothing has been sent.' +
             (created.sendable ? '' : ` No identity authorises "${created.from}", so sending this draft would be refused.`),
@@ -217,10 +231,12 @@ export async function draftReply(params: z.infer<typeof draftReplySchema>): Prom
         from: created.from,
         to,
         subject,
-        threaded: Boolean(inReplyTo),
+        threadingHeadersWritten: Boolean(inReplyTo),
         message:
             'Draft reply saved to Drafts. Nothing has been sent.' +
-            (inReplyTo ? '' : ' The original has no Message-ID, so this reply will not thread.') +
+            (inReplyTo
+                ? ' In-Reply-To and References are written on the draft; whether the reply actually threads also depends on how it is sent, since some mail clients rebuild a draft on send and drop them.'
+                : ' The original has no Message-ID, so this reply cannot thread.') +
             (created.sendable ? '' : ` No identity authorises "${created.from}", so sending this draft would be refused.`),
         account: manager.getCurrentAccountName(),
     };
@@ -253,7 +269,7 @@ export async function draftForward(
         to,
         subject,
         // A forward is not a reply; it starts its own conversation.
-        threaded: false,
+        threadingHeadersWritten: false,
         message:
             'Draft forward saved to Drafts. Nothing has been sent.' +
             (created.sendable ? '' : ` No identity authorises "${created.from}", so sending this draft would be refused.`),
@@ -376,7 +392,9 @@ export async function updateDraft(
         from: created.from,
         to,
         subject,
-        threaded: Boolean(inReplyTo),
+        // Inherited from the draft being revised, so a revision does not
+        // quietly stop being a reply.
+        threadingHeadersWritten: Boolean(inReplyTo),
         message:
             `Draft revised. Its id is now ${created.emailId}; ${params.emailId} is in Trash and should not be used again. Nothing has been sent.` +
             (created.sendable ? '' : ` No identity authorises "${created.from}", so sending this draft would be refused.`),

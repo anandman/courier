@@ -107,6 +107,29 @@ Stored `disabledToolGroups` values are ignored. If you had turned a group off,
 those tools are available again — and restricting them is now a per-client
 decision.
 
+## Changed: `threaded` is now `threadingHeadersWritten`
+
+A draft tool's result reported `threaded: true`, which read as a prediction —
+"this will appear as a reply". It is a fact about the stored draft, and the two
+diverge exactly where it matters.
+
+A consumer measured three Courier-written replies arriving as new conversations
+while four hand-written ones threaded correctly, and reported that Courier was
+stripping the headers. It was not: the stored drafts carry In-Reply-To and
+References all the way down to the RFC 5322 bytes, verified by downloading the
+raw message. The headers were lost when the drafts were opened in a mail client
+and sent — a composer that rebuilds a draft on send drops headers it does not
+manage.
+
+So the field was telling the truth and the reader drew the wrong conclusion from
+it, which is the field's fault. It now names what it can guarantee, and the
+message says that threading also depends on how the draft is sent.
+
+Worth knowing downstream: anything answering "has this been replied to?" by
+threadId or In-Reply-To gets a false negative when a draft is sent by a client
+that rebuilds it. Matching on normalised subject as well is a reasonable
+mitigation.
+
 ## Fixed: a bad command line reported as an authentication failure
 
 Authentication was checked before the command line was parsed, so with no

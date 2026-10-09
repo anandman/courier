@@ -89,7 +89,7 @@ describe('revising a draft', () => {
 
     it('reports that it still threads', async () => {
         const result = await run({ emailId: 'old-id', body: 'x' });
-        expect(result.threaded).toBe(true);
+        expect(result.threadingHeadersWritten).toBe(true);
         expect(result.kind).toBe('reply');
     });
 

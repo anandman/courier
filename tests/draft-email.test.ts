@@ -121,7 +121,7 @@ describe('reply mode', () => {
 
         expect(created?.inReplyTo).toBe('orig@example.com');
         expect(created?.references).toEqual(['root@example.com', 'orig@example.com']);
-        expect(r.threaded).toBe(true);
+        expect(r.threadingHeadersWritten).toBe(true);
     });
 
     it('addresses the original sender without being told', async () => {
@@ -164,8 +164,8 @@ describe('reply mode', () => {
 
         const r = await reply({ emailId: 'E1', body: 'x' });
 
-        expect(r.threaded).toBe(false);
-        expect(r.message).toMatch(/will not thread/i);
+        expect(r.threadingHeadersWritten).toBe(false);
+        expect(r.message).toMatch(/cannot thread/i);
     });
 
     it('prefers Reply-To over From, which is what it is for', async () => {
@@ -186,7 +186,7 @@ describe('forward mode', () => {
 
         expect(r.subject).toBe('Fwd: OAuth client registration request');
         expect(created?.inReplyTo).toBeUndefined();
-        expect(r.threaded).toBe(false);
+        expect(r.threadingHeadersWritten).toBe(false);
     });
 });
 
@@ -294,5 +294,33 @@ describe('an unusual From is allowed, and its sendability reported', () => {
 
         expect(r.sendable).toBe(true);
         expect(r.message).not.toMatch(/refused/i);
+    });
+});
+
+describe('what the threading field claims', () => {
+    /**
+     * It was called `threaded`, which read as a prediction: "this will appear
+     * as a reply". It is a fact about the stored draft, and the two diverge
+     * exactly where it matters -- a mail client that rebuilds a draft on send
+     * drops headers its composer does not manage, so a correctly-threaded draft
+     * can arrive as an orphan.
+     *
+     * That happened. A consumer read `threaded: true` while the recipient saw a
+     * new conversation, nothing downstream could detect the difference, and a
+     * dashboard asked twice for a confirmation already given.
+     */
+    it('names itself after the fact it can guarantee', async () => {
+        const r = await reply({ emailId: 'E1', body: 'x' });
+
+        expect(r).toHaveProperty('threadingHeadersWritten');
+        expect(r).not.toHaveProperty('threaded');
+        expect(r.threadingHeadersWritten).toBe(true);
+    });
+
+    it('says that threading also depends on how the draft is sent', async () => {
+        const r = await reply({ emailId: 'E1', body: 'x' });
+
+        expect(r.message).toMatch(/depends on how it is sent/);
+        expect(r.message).toMatch(/rebuild a draft on send/);
     });
 });
