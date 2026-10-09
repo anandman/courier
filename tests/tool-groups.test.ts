@@ -48,3 +48,32 @@ describe('tool groups as a display arrangement', () => {
         }
     });
 });
+
+describe('choosing between a real mailbox and a migration leftover', () => {
+    /**
+     * isSubscribed was going to be the signal: unsubscribed folders are hidden
+     * by mail clients, so an unsubscribed mailbox looked like a leftover.
+     * Measuring it against a live account killed the idea -- the Inbox itself,
+     * 124,500 messages and role=inbox, is isSubscribed: false, while an empty
+     * roleless "Archives" is true. A model told to prefer subscribed folders
+     * would skip the Inbox.
+     *
+     * It is still reported, because it is free and someone may want it. It is
+     * the GUIDANCE that had to be right.
+     */
+    it('does not tell a model to judge by subscription', async () => {
+        const { tools } = await import('../src/tools/index.js');
+        const description = tools.find((tool) => tool.name === 'list_mailboxes')?.description ?? '';
+
+        expect(description).toMatch(/Do NOT use isSubscribed/);
+    });
+
+    it('points at the role, the path and the count instead', async () => {
+        const { tools } = await import('../src/tools/index.js');
+        const description = tools.find((tool) => tool.name === 'list_mailboxes')?.description ?? '';
+
+        expect(description).toMatch(/PREFER the mailbox carrying the ROLE/);
+        expect(description).toMatch(/totalCount/);
+        expect(description).toMatch(/path/);
+    });
+});

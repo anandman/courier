@@ -234,7 +234,8 @@ const baseTools: ToolDefinition[] = [
     // Mailboxes
     {
         name: 'list_mailboxes',
-        description: 'List mailboxes/folders in the current account (lightweight; use to resolve mailbox names/IDs).',
+        description:
+            'List mailboxes/folders in the current account (lightweight; use to resolve mailbox names/IDs). Each reports path, role, totalCount, unreadCount and isSubscribed. An account migrated from IMAP often carries folders a human never sees -- a roleless "Junk" beside the real role=junk "Spam", or an "Inbox.archive" under a "migrated/" parent. To pick the right one: PREFER the mailbox carrying the ROLE ("inbox", "junk", "archive", "trash") over any merely named for it, then look at `path` and `totalCount`. Do NOT use isSubscribed to judge this -- on a real account the Inbox itself can be unsubscribed while an empty leftover is not.',
         inputSchema: listMailboxesSchema,
         handler: listMailboxes,
     },

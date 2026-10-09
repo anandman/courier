@@ -19,6 +19,7 @@ export async function listMailboxes(): Promise<{
         unreadCount: number;
         totalCount: number;
         path: string;
+        isSubscribed: boolean;
     }>;
     account: string | null;
 }> {
@@ -74,6 +75,18 @@ export async function listMailboxes(): Promise<{
             unreadCount: mb.unreadEmails,
             totalCount: mb.totalEmails,
             path: getPath(mb),
+            // Reported, but NOT a signal for "is this folder real".
+            //
+            // That was the intention, and measuring it killed the idea: on a
+            // live Fastmail account the Inbox itself -- 124,500 messages, the
+            // role=inbox mailbox -- is isSubscribed: false, while an empty
+            // leftover named "Archives" is true. A model told to prefer
+            // subscribed folders would skip the Inbox.
+            //
+            // What actually separates a real folder from a migration leftover
+            // is already here: the ROLE, and `totalCount`, and the `path` --
+            // the leftovers on that account sit under "migrated/".
+            isSubscribed: mb.isSubscribed,
         })),
         account: manager.getCurrentAccountName(),
     };
